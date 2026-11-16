@@ -1,0 +1,17 @@
+{
+  "name": "memory-audit",
+  "description": "Memory Audit: find the Claude Code memory notes you shouldn't trust.",
+  "owner": {
+    "name": "Utsav Kumar"
+  },
+  "plugins": [
+    {
+      "name": "memory-audit",
+      "source": "./plugin",
+      "description": "Check your Claude Code memory notes against your own session logs, and fix the wrong ones.",
+      "author": {
+        "name": "Utsav Kumar"
+      }
+    }
+  ]
+}

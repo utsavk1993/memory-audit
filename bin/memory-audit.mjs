@@ -16,10 +16,19 @@ const value = (n, d) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : d;
 };
 
+// Terminal commands (check, evidence, apply, …) live in the headless CLI the Claude Code plugin ships with.
+const COMMANDS = ["check", "evidence", "save-result", "apply", "undo", "add-to-index", "remove-broken-links", "ui", "help"];
+if (args[0] && COMMANDS.includes(args[0])) {
+  const cli = spawn(process.execPath, [path.join(root, "plugin", "dist", "cli.mjs"), ...args], { stdio: "inherit" });
+  cli.on("exit", (code) => process.exit(code ?? 1));
+} else main();
+
+function main() {
 if (flag("--help") || flag("-h")) {
   console.log(`Memory Audit: inspect and fix your Claude Code memory notes.
 
 Usage: npx memory-audit [options]
+       npx memory-audit <command>    terminal commands; see \`npx memory-audit help\`
 
   --port <n>     Port to listen on (default 3210)
   --no-open      Don't open the browser
@@ -66,3 +75,4 @@ child.stdout.on("data", (buf) => {
 
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => child.kill(sig));
 child.on("exit", (code) => process.exit(code ?? 0));
+}

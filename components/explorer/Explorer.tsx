@@ -1,12 +1,13 @@
 "use client";
 
-import { CircleCheck, FileText, Lock, MessagesSquare, ShieldCheck, X } from "lucide-react";
+import { ArrowLeft, CircleCheck, FileText, Lock, MessagesSquare, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { ProjectAudit } from "@/lib/audit/types";
 import type { ProjectDetail, ProjectSummary } from "@/lib/claude-code/types";
 import { useJson, type Loadable } from "@/lib/claude-code/useJson";
 import { api, getJson } from "@/lib/client";
 import { MemoryView } from "./MemoryView";
+import { ResizeHandle, usePanelWidth } from "./Resizer";
 import { ProjectView } from "./ProjectView";
 import { SessionView } from "./SessionView";
 import { Sidebar } from "./Sidebar";
@@ -26,6 +27,12 @@ export interface AuditCtx {
 
 const API = "/api/claude-code/projects";
 
+/** One step in the in-app history. Stored in the browser's history, so Back (button, mouse or keyboard) works. */
+type Step = { sel: Selection | null; prev: Selection | null; depth: number };
+
+const keyOf = (s: Selection | null) =>
+  s ? `${s.project}:${s.view}:${"file" in s ? s.file : "id" in s ? `${s.id}:${s.line ?? ""}` : ""}` : "none";
+
 export function Explorer() {
   const [sel, setSel] = useState<Selection | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -43,13 +50,39 @@ export function Explorer() {
       .then((data) => setAudits((a) => ({ ...a, [id]: { state: "ready", data } })))
       .catch((e: Error) => setAudits((a) => ({ ...a, [id]: { state: "error", error: e.message } })));
   }, []);
-  const select = useCallback(
-    (next: Selection | null) => {
-      setSel(next);
-      if (next && !audits[next.project]) runAudit(next.project);
+  const [step, setStep] = useState<Pick<Step, "prev" | "depth">>({ prev: null, depth: 0 });
+  const ensureAudit = useCallback(
+    (s: Selection | null) => {
+      if (s && !audits[s.project]) runAudit(s.project);
     },
     [audits, runAudit],
   );
+  const select = useCallback(
+    (next: Selection | null) => {
+      if (keyOf(next) === keyOf(sel)) return;
+      const entry: Step = { sel: next, prev: sel, depth: step.depth + 1 };
+      window.history.pushState({ memoryAudit: entry }, "");
+      setSel(next);
+      setStep({ prev: sel, depth: entry.depth });
+      ensureAudit(next);
+    },
+    [sel, step.depth, ensureAudit],
+  );
+  useEffect(() => {
+    window.history.replaceState({ memoryAudit: { sel: null, prev: null, depth: 0 } satisfies Step }, "");
+  }, []);
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const entry = (e.state as { memoryAudit?: Step } | null)?.memoryAudit;
+      if (!entry) return;
+      setSel(entry.sel);
+      setStep({ prev: entry.prev, depth: entry.depth });
+      ensureAudit(entry.sel);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [ensureAudit]);
+  const sidebar = usePanelWidth("memory-audit.sidebar-width", 340, 260, 560);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 6000);
@@ -69,13 +102,16 @@ export function Explorer() {
       }
     : null;
 
-  const viewKey = sel
-    ? `${sel.project}:${sel.view}:${"file" in sel ? sel.file : "id" in sel ? `${sel.id}:${sel.line ?? ""}` : ""}`
-    : "none";
+  const viewKey = keyOf(sel);
+  const backLabel = describe(step.prev, detail.state === "ready" ? detail.data : null);
 
   return (
-    <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[340px_minmax(0,1fr)]">
-      <div className="flex h-[50dvh] min-h-0 flex-col lg:h-auto">
+    <div
+      className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[var(--sidebar-w)_minmax(0,1fr)]"
+      style={{ "--sidebar-w": `${sidebar.width}px` } as React.CSSProperties}
+    >
+      <div className="relative flex h-[50dvh] min-h-0 flex-col lg:h-auto">
+        <ResizeHandle label="Resize the projects panel" edge="right" panel={sidebar} className="lg:flex" />
         <Sidebar
           projects={projects}
           detail={detail}
@@ -94,6 +130,18 @@ export function Explorer() {
         aria-label="Viewer"
         className="scroll-thin min-h-[60dvh] overflow-y-auto rounded-xl border border-line bg-panel lg:min-h-0"
       >
+        {step.depth > 0 && (
+          <div className="sticky top-0 z-20 border-b border-line bg-panel/95 px-3 py-2 backdrop-blur">
+            <button
+              type="button"
+              onClick={() => window.history.back()}
+              className="inline-flex min-h-8 max-w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs text-fg-muted transition-colors duration-150 hover:bg-muted hover:text-fg"
+            >
+              <ArrowLeft aria-hidden className="size-3.5 shrink-0" />
+              <span className="truncate">Back to {backLabel}</span>
+            </button>
+          </div>
+        )}
         {!sel || !auditCtx ? (
           <Welcome />
         ) : detail.state !== "ready" ? null : sel.view === "overview" ? (
@@ -116,6 +164,17 @@ export function Explorer() {
       )}
     </div>
   );
+}
+
+/** Name the screen Back returns to, e.g. "git-workflow.md" or "the project overview". */
+function describe(s: Selection | null, d: ProjectDetail | null): string {
+  if (!s) return "the start";
+  if (s.view === "overview") return "the project overview";
+  if (s.view === "memory") {
+    const m = d?.id === s.project ? d.memory.find((x) => x.file === s.file) : undefined;
+    return m?.name ?? s.file;
+  }
+  return "the conversation";
 }
 
 function Welcome() {

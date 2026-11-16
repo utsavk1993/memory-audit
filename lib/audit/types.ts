@@ -44,6 +44,16 @@ export type AiVerdict = "supported" | "outdated" | "contradicted" | "unverified"
 /** claude-code = your logged-in Claude Code CLI (no API key). */
 export type AiProvider = "claude-code" | "anthropic" | "nvidia";
 
+/** Whether the AI check can run, and which account it would use. */
+export interface AiConnection {
+  provider: AiProvider | null;
+  connected: boolean;
+  /** What it's connected through, e.g. "Claude account · Team plan". Null when not connected. */
+  account: string | null;
+  /** What to do when it isn't connected. */
+  fix: string | null;
+}
+
 export interface AiEstimate {
   provider: AiProvider | null; // null = nothing available
   model: string;

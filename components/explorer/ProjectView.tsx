@@ -6,8 +6,9 @@ import type { Severity } from "@/lib/audit/types";
 import type { ProjectDetail } from "@/lib/claude-code/types";
 import { api, postJson } from "@/lib/client";
 import { Badge, Dot, FindingRow, SEV } from "./audit-ui";
-import { Pill, cx } from "../ui";
-import { TYPE_STYLE, fmtDate, fmtSize, shortHome } from "./format";
+import { cx } from "../ui";
+import { fmtDate, fmtSize, shortHome } from "./format";
+import { TypeTag } from "./TypeTag";
 import type { AuditCtx, Selection } from "./Explorer";
 
 export function ProjectView({ d, ctx, onSelect }: { d: ProjectDetail; ctx: AuditCtx; onSelect: (s: Selection) => void }) {
@@ -51,7 +52,7 @@ export function ProjectView({ d, ctx, onSelect }: { d: ProjectDetail; ctx: Audit
                       <span className="truncate">{m.name ?? m.file}</span>
                     </span>
                     <span className="flex items-center gap-1.5">
-                      {m.type && <Pill label={m.type} className={TYPE_STYLE[m.type] ?? "bg-muted text-fg-muted"} />}
+                      {m.type && <TypeTag type={m.type} align="right" focusable={false} />}
                       {status.get(m.file) && <Dot s={status.get(m.file)!} />}
                     </span>
                   </span>
@@ -125,16 +126,16 @@ function AuditPanel({ d, ctx, onSelect }: { d: ProjectDetail; ctx: AuditCtx; onS
   return (
     <section className="rounded-xl border border-line bg-card p-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+        <div className="min-w-0 flex-1">
           <h3 className="flex items-center gap-2 text-sm font-semibold">
             <ShieldCheck aria-hidden className="size-4 text-ok" /> Quick checks{" "}
             <span className="font-normal text-fg-muted">· no AI</span>
           </h3>
-          <p className="mt-0.5 max-w-2xl text-xs leading-5 text-fg-muted">
-            Plain rules, run on your machine against your files and {a.state === "ready" ? a.data.sessionsRead : "…"}{" "}
-            session log{a.state === "ready" && a.data.sessionsRead === 1 ? "" : "s"}. They flag warning signs; they
-            don&rsquo;t judge whether a note is true. Open a flagged note and use <b className="text-fg">AI check</b> for a
-            verdict.
+          <p className="mt-0.5 text-xs leading-5 text-fg-muted">
+            Simple rules that run on your machine, comparing your notes with{" "}
+            {a.state === "ready" ? a.data.sessionsRead : "…"} session log
+            {a.state === "ready" && a.data.sessionsRead === 1 ? "" : "s"}. They spot warning signs but can&rsquo;t tell
+            whether a note is true. For that, open a flagged note and run the <b className="text-fg">AI check</b>.
           </p>
         </div>
         <button

@@ -1,0 +1,16 @@
+{
+  "name": "memory-audit",
+  "version": "0.1.0",
+  "description": "Check your Claude Code memory notes against your own session logs, and fix the wrong ones, without leaving the chat.",
+  "author": {
+    "name": "Utsav Kumar"
+  },
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "audit",
+    "claude-code"
+  ],
+  "homepage": "https://github.com/utsavk1993/memory-audit",
+  "repository": "https://github.com/utsavk1993/memory-audit"
+}

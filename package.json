@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "Inspect, verify and fix your Claude Code memory notes against your own session logs. Runs locally.",
   "license": "MIT",
+  "author": "Utsav Kumar",
+  "homepage": "https://github.com/utsavk1993/memory-audit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/utsavk1993/memory-audit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/utsavk1993/memory-audit/issues"
+  },
   "keywords": [
     "claude",
     "claude-code",
@@ -16,6 +25,7 @@
   },
   "files": [
     "bin",
+    "plugin",
     ".next",
     "!.next/cache",
     "!.next/dev",
@@ -30,11 +40,12 @@
   },
   "scripts": {
     "dev": "next dev -H 127.0.0.1 -p 3210",
-    "build": "next build",
+    "build": "next build && node scripts/build-cli.mjs",
     "start": "node bin/memory-audit.mjs",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "prepack": "next build && node scripts/scrub-build-paths.mjs"
+    "prepack": "next build && node scripts/build-cli.mjs && node scripts/scrub-build-paths.mjs",
+    "build:plugin": "node scripts/build-cli.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
@@ -51,6 +62,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "^0.25.12",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "tailwindcss": "4.3.3",

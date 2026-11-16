@@ -6,9 +6,11 @@ import type { MemoryFile, ProjectDetail } from "@/lib/claude-code/types";
 import { useJson } from "@/lib/claude-code/useJson";
 import { Markdown } from "../Markdown";
 import { Pill, cx } from "../ui";
-import { TYPE_STYLE, fmtDate, shortHome } from "./format";
+import { fmtDate, shortHome } from "./format";
+import { TypeTag } from "./TypeTag";
 import type { AuditCtx, Selection } from "./Explorer";
 import { Inspector } from "./Inspector";
+import { ResizeHandle, usePanelWidth } from "./Resizer";
 
 // Frontmatter fields shown in the header rather than the generic list.
 const SHOWN = new Set(["name", "description", "type", "originSessionId", "modified"]);
@@ -27,6 +29,7 @@ export function MemoryView({
   onSelect: (s: Selection) => void;
 }) {
   const [raw, setRaw] = useState(false);
+  const inspector = usePanelWidth("memory-audit.inspector-width", 400, 320, 760);
   const res = useJson<MemoryFile>(
     `/api/claude-code/projects/${encodeURIComponent(project.id)}/memory/${encodeURIComponent(file)}`,
     reloadKey,
@@ -58,7 +61,10 @@ export function MemoryView({
   const noteAudit = ctx.audit.state === "ready" ? (ctx.audit.data.notes.find((n) => n.file === file) ?? null) : null;
 
   return (
-    <div className="grid gap-5 p-5 2xl:grid-cols-[minmax(0,1fr)_440px] xl:grid-cols-[minmax(0,1fr)_380px]">
+    <div
+      className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_var(--inspector-w)]"
+      style={{ "--inspector-w": `${inspector.width}px` } as React.CSSProperties}
+    >
     <article className="min-w-0 space-y-5">
       <header className="space-y-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -83,7 +89,7 @@ export function MemoryView({
         </div>
         {fm.description && <p className="max-w-3xl text-sm leading-6 text-fg-muted">{fm.description}</p>}
         <div className="flex flex-wrap items-center gap-2">
-          {fm.type && <Pill label={fm.type} className={TYPE_STYLE[fm.type] ?? "bg-muted text-fg-muted"} />}
+          {fm.type && <TypeTag type={fm.type} />}
           {!isIndex && summary && !summary.inIndex && (
             <Pill icon={TriangleAlert} label="Not listed in MEMORY.md" className="bg-warn/10 text-warn" />
           )}
@@ -136,7 +142,8 @@ export function MemoryView({
         )}
       </div>
     </article>
-      <aside aria-label="Inspector" className="min-w-0">
+      <aside aria-label="Inspector" className="relative min-w-0">
+        <ResizeHandle label="Resize the Inspector" edge="left" panel={inspector} className="xl:flex" />
         <Inspector
           projectId={project.id}
           note={m}

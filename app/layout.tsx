@@ -17,7 +17,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Memory Audit",
   description:
-    "Watch an agent trust a wrong memory note, and watch an offline checker catch it.",
+    "Check your Claude Code memory notes against your own session logs, and fix the ones that are wrong.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

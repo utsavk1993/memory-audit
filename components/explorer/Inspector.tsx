@@ -13,9 +13,10 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { AiEstimate, AiResult, Backup, NoteAudit } from "@/lib/audit/types";
+import type { AiConnection, AiEstimate, AiResult, Backup, NoteAudit } from "@/lib/audit/types";
 import type { MemoryFile } from "@/lib/claude-code/types";
 import { api, getJson, postJson } from "@/lib/client";
+import { hasRealFix } from "@/lib/audit/fixable";
 import { diffLines, markUnverified } from "@/lib/diff";
 import { cx } from "../ui";
 import { Badge, EvidenceList, FindingRow, VERDICT, VerdictBadge } from "./audit-ui";
@@ -156,12 +157,61 @@ export function Inspector({
 
 // ───────────── AI check ─────────────
 
+function ConnectionStatus({
+  conn,
+  onRecheck,
+}: {
+  conn: { s: "checking" } | { s: "ready"; c: AiConnection } | { s: "error"; error: string };
+  onRecheck: () => void;
+}) {
+  if (conn.s === "checking")
+    return (
+      <p className="mb-3 flex items-center gap-2 text-xs text-fg-muted">
+        <Loader2 aria-hidden className="size-3.5 animate-spin" /> Checking your Claude connection…
+      </p>
+    );
+  if (conn.s === "ready" && conn.c.connected)
+    return (
+      <p className="mb-3 flex items-center gap-2 text-xs text-fg-muted">
+        <span aria-hidden className="size-2 shrink-0 rounded-full bg-ok" />
+        Connected · <span className="text-fg">{conn.c.account}</span>
+      </p>
+    );
+  const why = conn.s === "error" ? `Couldn't check the connection: ${conn.error}` : (conn.c.fix ?? "Not connected.");
+  return (
+    <div className="mb-3 flex items-start gap-2 rounded-lg border border-warn/30 bg-warn/10 p-2.5 text-xs">
+      <span aria-hidden className="mt-1 size-2 shrink-0 rounded-full bg-warn" />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-fg">Not connected to Claude</p>
+        <p className="mt-0.5 text-fg-muted">{why}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onRecheck}
+        className="min-h-7 shrink-0 cursor-pointer rounded-md px-2 text-fg-muted transition-colors duration-150 hover:bg-muted hover:text-fg"
+      >
+        Re-check
+      </button>
+    </div>
+  );
+}
+
 type AiState =
   | { s: "idle" }
   | { s: "estimating" }
   | { s: "estimate"; est: AiEstimate }
   | { s: "running"; est: AiEstimate }
   | { s: "error"; error: string };
+
+// One connection check per page load, shared by every note; "Re-check" asks again.
+let connectionReq: Promise<AiConnection> | null = null;
+const loadConnection = (fresh = false) => {
+  if (fresh || !connectionReq) {
+    connectionReq = getJson<AiConnection>("/api/claude-code/connection");
+    connectionReq.catch(() => (connectionReq = null));
+  }
+  return connectionReq;
+};
 
 const usd = (n: number | null) => (n === null ? "n/a" : n < 0.01 ? "under $0.01" : `$${n.toFixed(2)}`);
 
@@ -179,6 +229,25 @@ function AiCheck({
   const url = `${api.note(projectId, note.file)}/ai`;
   const [state, setState] = useState<AiState>({ s: "idle" });
   const [result, setResult] = useState<AiResult | null>(null);
+  const [conn, setConn] = useState<{ s: "checking" } | { s: "ready"; c: AiConnection } | { s: "error"; error: string }>({
+    s: "checking",
+  });
+  const checkConnection = (fresh: boolean) => {
+    setConn({ s: "checking" });
+    loadConnection(fresh)
+      .then((c) => setConn({ s: "ready", c }))
+      .catch((e: Error) => setConn({ s: "error", error: e.message }));
+  };
+
+  useEffect(() => {
+    let live = true;
+    loadConnection()
+      .then((c) => live && setConn({ s: "ready", c }))
+      .catch((e: Error) => live && setConn({ s: "error", error: e.message }));
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -208,6 +277,8 @@ function AiCheck({
     }
   };
   const stale = result && note.updatedAt > result.ranAt;
+  // Saved results from before this rule may still carry a "fix" that only tags lines "(unverified)".
+  const fixable = Boolean(result?.proposedRaw && hasRealFix(result.reasons));
 
   return (
     <section className="rounded-xl border border-guess/30 bg-card p-4">
@@ -220,18 +291,21 @@ function AiCheck({
         you see what will be sent before it runs.
       </p>
 
+      <ConnectionStatus conn={conn} onRecheck={() => checkConnection(true)} />
+
       {state.s === "idle" && (
         <button
           type="button"
           onClick={estimate}
-          className="min-h-9 cursor-pointer rounded-md bg-guess/15 px-3 text-xs font-medium text-guess transition-colors duration-150 hover:bg-guess/25"
+          disabled={conn.s !== "ready" || !conn.c.connected}
+          className="min-h-9 cursor-pointer rounded-md bg-guess/15 px-3 text-xs font-medium text-guess transition-colors duration-150 hover:bg-guess/25 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-guess/15"
         >
-          {result ? "Check again" : "Check with AI"} · see cost first
+          {result ? "Check again" : "Check with AI"}
         </button>
       )}
       {state.s === "estimating" && (
         <p className="flex items-center gap-2 text-xs text-fg-muted">
-          <Loader2 aria-hidden className="size-3.5 animate-spin" /> Gathering evidence and counting tokens…
+          <Loader2 aria-hidden className="size-3.5 animate-spin" /> Gathering the related parts of your logs…
         </p>
       )}
       {(state.s === "estimate" || state.s === "running") && (
@@ -266,9 +340,7 @@ function AiCheck({
                   file access: Claude only sees the excerpts above.
                 </p>
               )}
-              {state.est.provider === "claude-code" ? (
-                <p className="text-fg-muted">No API key, no extra bill. It counts toward your Claude plan&rsquo;s usage.</p>
-              ) : state.est.typicalCostUsd !== null ? (
+              {state.est.provider === "claude-code" ? null : state.est.typicalCostUsd !== null ? (
                 <p className="text-fg-muted">
                   Usually about <b className="text-fg">{usd(state.est.typicalCostUsd)}</b>, never more than{" "}
                   {usd(state.est.maxCostUsd)}.
@@ -341,14 +413,27 @@ function AiCheck({
               );
             })}
           </ul>
-          {result.proposedRaw && !stale && (
-            <button
-              type="button"
-              onClick={() => onFix({ title: "Apply the AI's suggested fix", reason: `AI fix (${result.verdict})`, raw: result.proposedRaw! })}
-              className="min-h-9 w-full cursor-pointer rounded-md bg-info px-3 text-xs font-semibold text-bg transition-opacity duration-150 hover:opacity-90"
-            >
-              Review the suggested fix
-            </button>
+          {!stale && (
+            <div className="space-y-1.5">
+              <button
+                type="button"
+                disabled={!fixable}
+                onClick={() =>
+                  result.proposedRaw &&
+                  onFix({ title: "Apply the AI's suggested fix", reason: `AI fix (${result.verdict})`, raw: result.proposedRaw })
+                }
+                className="min-h-9 w-full cursor-pointer rounded-md bg-info px-3 text-xs font-semibold text-bg transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-fg-subtle disabled:hover:opacity-100"
+              >
+                Review the suggested fix
+              </button>
+              {!fixable && (
+                <p className="text-[11px] leading-4 text-fg-subtle">
+                  {result.verdict === "supported"
+                    ? "Nothing to fix: your logs back up this note."
+                    : "No fix to suggest: nothing in your logs shows this note is out of date or wrong."}
+                </p>
+              )}
+            </div>
           )}
         </div>
       )}
