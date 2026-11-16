@@ -1,17 +1,50 @@
 {
-  "name": "web",
+  "name": "memory-audit",
   "version": "0.1.0",
-  "private": true,
+  "description": "Inspect, verify and fix your Claude Code memory notes against your own session logs. Runs locally.",
+  "license": "MIT",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-memory",
+    "memory",
+    "audit",
+    "llm"
+  ],
+  "bin": {
+    "memory-audit": "bin/memory-audit.mjs"
+  },
+  "files": [
+    "bin",
+    ".next",
+    "!.next/cache",
+    "!.next/dev",
+    "!.next/trace*",
+    "public",
+    "next.config.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.9"
+  },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1 -p 3210",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "node bin/memory-audit.mjs",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "prepack": "next build && node scripts/scrub-build-paths.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "lucide-react": "^1.71.0",
     "next": "16.4.6",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "4.3.3",
