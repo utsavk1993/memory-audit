@@ -205,7 +205,46 @@ npm run build:plugin   # rebuild plugin/dist/cli.mjs after changing lib/
 
 - 🤝 **Codex support**, then other agents that keep file-based memory.
 - 🌙 **Scheduled audits ("dreaming")**: re-check notes after each session.
-- ☁️ **A hosted demo** with sample data, and an optional hosted mode that takes uploaded memory files.
+- ☁️ **An optional hosted mode** that takes uploaded memory files.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome: bug reports, ideas, docs and code.
+
+### 🐛 Issues
+
+- **Found a bug?** [Open an issue](https://github.com/utsavk1993/memory-audit/issues) with what you did, what you expected, and what happened. Include your OS, Node version and `claude --version`.
+- **Have an idea?** Open an issue before starting on something big, so we can agree on the approach first.
+- 🔒 **Never paste real memory notes or session logs** into an issue or pull request. They hold your private conversations. Make up a small example that shows the problem instead.
+
+### 🔀 Pull requests
+
+1. Fork the repo and create a branch from `main`, named for the change, e.g. `fix/stale-badge` or `docs/plugin-install`.
+2. Set it up:
+
+   ```bash
+   npm install
+   npm run dev            # http://127.0.0.1:3210
+   ```
+
+3. Make your change in small, focused commits.
+4. Before you push, make sure everything passes:
+
+   ```bash
+   npm run typecheck && npm run lint
+   npm run build          # also rebuilds plugin/dist/cli.mjs
+   ```
+
+   If you changed anything in `lib/`, commit the rebuilt `plugin/dist/cli.mjs` too: the plugin installs straight from this repo.
+5. Open a pull request against `main`. Say what changed and why, and add a screenshot or short clip for UI changes.
+
+### 🧭 Ground rules
+
+- 🏠 **Keep it local-first.** Nothing may send notes or logs anywhere without the user clicking for it, and a new service that would see the logs for the first time needs a clear warning in the UI.
+- ✍️ **All writes go through `lib/audit/writer.ts`**, so every change is backed up, checked against newer edits, and can be undone.
+- 🧩 **The web app and the plugin share one engine.** Put audit logic in `lib/`, not in a component or a skill, so both get it.
 
 ---
 
