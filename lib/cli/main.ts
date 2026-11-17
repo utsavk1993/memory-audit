@@ -338,8 +338,9 @@ async function ui() {
   const logDir = path.join(homedir(), ".memory-audit");
   mkdirSync(logDir, { recursive: true });
   const logFile = path.join(logDir, "ui.log");
-  const logStart = existsSync(logFile) ? statSync(logFile).size : 0;
   const log = openSync(logFile, "a");
+  // Size from the open file itself, so only lines written by this launch are shown on failure.
+  const logStart = fstatSync(log).size;
   const extra = flags.has("--readonly") ? ["--readonly"] : [];
   const [command, spawnArgs] = spawnCommand(launch, ["--port", port, "--no-open", ...extra]);
   const app = spawn(command, spawnArgs, {
