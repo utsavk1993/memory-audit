@@ -3,13 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("next/server", async (orig) => ({ ...(await orig<typeof import("next/server")>()), connection: async () => {} }));
 
 import { NextRequest } from "next/server";
-import { connection, estimate, lastResult, verify } from "@/lib/audit/ai";
+import { AiError, connection, estimate, lastResult, verify } from "@/lib/audit/ai";
 import { auditProject } from "@/lib/audit/checks";
 import { buildContext, toResult } from "@/lib/audit/evidence";
 import { addToIndex, removeBrokenLinks, writeNote } from "@/lib/audit/writer";
 import { listProjects, readMemory } from "@/lib/claude-code/reader";
 import { guardedJson } from "@/lib/claude-code/respond";
-import { DEMO_READONLY, demoAnswer } from "@/lib/demo";
+import { DEMO_READONLY, demoAnswer, demoFileTime, demoProjectsRoot } from "@/lib/demo";
 import { proxy } from "@/proxy";
 
 const PROJECT = "-Users-dev-acme-storefront";
@@ -71,6 +71,15 @@ describe("hosted demo (MEMORY_AUDIT_DEMO=1)", () => {
     expect(r.proposedRaw).toContain("fly deploy");
     expect(r.reasons[0].evidence.length).toBeGreaterThan(0);
     expect(await lastResult(PROJECT, "deploy-process.md")).toBeNull();
+  });
+
+  it("says so when a note has no saved answer", async () => {
+    await expect(verify(PROJECT, "MEMORY.md")).rejects.toThrow(AiError);
+  });
+
+  it("falls back to the file time for a file with no logged time", () => {
+    expect(demoFileTime(`${demoProjectsRoot()}/${PROJECT}/memory/MEMORY.md`)).toEqual(new Date("2026-06-10T15:23:00.000Z"));
+    expect(demoFileTime(`${demoProjectsRoot()}/${PROJECT}/memory/unknown.md`)).toBeNull();
   });
 
   it("refuses every write", async () => {
