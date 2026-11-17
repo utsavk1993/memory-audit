@@ -13,10 +13,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // `--port=4000` means the same as `--port 4000` (the terminal commands accept both forms too).
 const args = process.argv.slice(2).flatMap((a) => (a.startsWith("--port=") ? ["--port", a.slice(7)] : [a]));
 const flag = (n) => args.includes(n);
-const value = (n, d) => {
-  const i = args.indexOf(n);
-  return i >= 0 && args[i + 1] ? args[i + 1] : d;
-};
 
 // Terminal commands (check, evidence, apply, …) live in the headless CLI the Claude Code plugin ships with.
 const COMMANDS = ["check", "evidence", "save-result", "apply", "undo", "add-to-index", "remove-broken-links", "ui", "help"];
@@ -25,12 +21,12 @@ if (args[0] && COMMANDS.includes(args[0])) {
   cli.on("exit", (code) => process.exit(code ?? 1));
 } else main();
 
-// Resolves true when nothing is listening on 127.0.0.1:<port>.
-function portFree(port) {
+// Resolves null when the app can listen on 127.0.0.1:<port>, else the error code (EADDRINUSE, EACCES, …).
+function portProblem(port) {
   return new Promise((resolve) => {
     const srv = createServer()
-      .once("error", () => resolve(false))
-      .once("listening", () => srv.close(() => resolve(true)));
+      .once("error", (e) => resolve(e.code ?? "unknown error"))
+      .once("listening", () => srv.close(() => resolve(null)));
     srv.listen(Number(port), "127.0.0.1");
   });
 }
@@ -54,7 +50,7 @@ if (flag("--help") || flag("-h")) {
 Usage: npx memory-audit [options]
        npx memory-audit <command>    terminal commands; see \`npx memory-audit help\`
 
-  --port <n>     Port to listen on (default 3210)
+  --port <n>     Port to listen on (default: $PORT if set, else 3210)
   --no-open      Don't open the browser
   --readonly     Never write to your memory folder
   --version      Print the version
@@ -69,15 +65,27 @@ Environment (all optional; see the README for the full list):
   process.exit(0);
 }
 
-const port = value("--port", "3210");
-if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
-  console.error("--port must be a number from 1 to 65535");
+const portAt = args.indexOf("--port");
+const port = portAt >= 0 ? args[portAt + 1] : process.env.PORT || "3210";
+if (portAt >= 0 && (!port || port.startsWith("-"))) {
+  console.error("--port needs a value, e.g. --port 3210");
   process.exit(1);
 }
-if (!(await portFree(port))) {
+if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+  console.error(`${portAt >= 0 ? "--port" : "PORT"} must be a number from 1 to 65535`);
+  process.exit(1);
+}
+const other = Number(port) < 65535 ? Number(port) + 1 : Number(port) - 1;
+const problem = await portProblem(port);
+if (problem === "EADDRINUSE") {
   console.error(`Port ${port} is already in use.
   If Memory Audit is already running, open http://127.0.0.1:${port}
-  Otherwise start it on another port: npx memory-audit --port ${Number(port) < 65535 ? Number(port) + 1 : Number(port) - 1}`);
+  Otherwise start it on another port: npx memory-audit --port ${other}`);
+  process.exit(1);
+}
+if (problem) {
+  const why = problem === "EACCES" ? "permission denied (ports below 1024 usually need admin rights)" : problem;
+  console.error(`Can't use port ${port}: ${why}. Try another one, e.g. npx memory-audit --port ${portAt >= 0 ? 3210 : other}`);
   process.exit(1);
 }
 if (!existsSync(path.join(root, ".next", "BUILD_ID"))) {

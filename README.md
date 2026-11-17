@@ -158,7 +158,7 @@ Found a security problem? Please report it privately; see [SECURITY.md](SECURITY
 
 | Flag / variable | Default | What it does |
 |---|---|---|
-| `--port <n>` | `3210` | Port |
+| `--port <n>` | `3210` | Port (or set `PORT`) |
 | `--no-open` | | Don't open the browser |
 | `--readonly` | | Never write to memory |
 | `--version` | | Print the version |

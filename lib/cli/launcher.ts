@@ -66,3 +66,6 @@ export function spawnCommand(l: Launch, extra: string[]): [string, string[]] {
 /** How to stop the detached app. It leads its own process group, so killing the group also stops Next.js. */
 export const stopHint = (pid: number | undefined, platform: NodeJS.Platform) =>
   pid === undefined ? "" : platform === "win32" ? `taskkill /PID ${pid} /T /F` : `kill -- -${pid}`;
+
+/** How to compare two paths on this platform: macOS and Windows file systems ignore case by default. */
+export const pathKey = (platform: NodeJS.Platform) => (p: string) => (platform === "darwin" || platform === "win32" ? p.toLowerCase() : p);

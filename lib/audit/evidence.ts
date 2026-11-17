@@ -170,7 +170,9 @@ export function toResult(
     };
   });
   // The verdict always follows the claims (the most serious one), so a contradiction can't sit under a green verdict.
-  const verdict = reasons.length ? worst(reasons.map((r) => r.status)) : (out.verdict as AiVerdict);
+  // With no claims there is nothing cited at all, so it is unverified whatever the model said.
+  const verdict = reasons.length ? worst(reasons.map((r) => r.status)) : "unverified";
+  const noClaims = !reasons.length && out.verdict !== "unverified";
 
   const proposed = out.proposed_note.trim() ? out.proposed_note.replace(/\s*$/, "\n") : null;
   const result: AiResult = {
@@ -180,10 +182,12 @@ export function toResult(
     model: meta.model,
     verdict,
     // The model's confidence and summary were about its own citations; say plainly that some didn't hold up.
-    confidence: downgraded ? "low" : out.confidence,
+    confidence: downgraded || noClaims ? "low" : out.confidence,
     summary: downgraded
       ? `${downgraded === 1 ? "1 claim cites" : `${downgraded} claims cite`} no real log line, so ${downgraded === 1 ? "it counts" : "they count"} as unverified. The AI's summary: ${out.summary}`
-      : out.summary,
+      : noClaims
+        ? `The AI listed no claims with cited log lines, so this counts as unverified. The AI's summary: ${out.summary}`
+        : out.summary,
     reasons,
     // Only suggest a fix when the logs show something is out of date or wrong. With no evidence either way,
     // the "fix" would just tag lines "(unverified)", which the Mark as unverified action already covers.

@@ -40,6 +40,13 @@ describe("launcher", () => {
     }
   });
 
+  it("needs a value for --port, and checks PORT too", () => {
+    for (const a of [["--port"], ["--port="], ["--no-open", "--port"]]) expect(run(...a).stderr).toContain("--port needs a value");
+    const r = spawnSync(process.execPath, [BIN], { encoding: "utf8", timeout: 10_000, env: { ...process.env, PORT: "abc" } });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("PORT must be a number from 1 to 65535");
+  });
+
   it("explains a port that is already in use", async () => {
     busy = createServer();
     await new Promise<void>((resolve) => busy!.listen(0, "127.0.0.1", resolve));

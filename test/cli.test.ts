@@ -118,6 +118,12 @@ describe("finding the project", () => {
     expect(inside.code).toBe(2);
     expect(inside.err).toMatch(/No Claude Code project found for/);
     expect((await cli(["check", "--project", home])).out).toContain(`Memory Audit · ${home}`); // the home folder itself is fine
+    // macOS and Windows ignore case in paths, so a differently-cased path is still inside home there.
+    const shouted = await cli(["check", "--project", path.join(home.toUpperCase(), "new-folder")]);
+    if (process.platform === "darwin" || process.platform === "win32") expect(shouted.err).toMatch(/No Claude Code project found/);
+    // A trailing slash on HOME doesn't defeat the guard either.
+    process.env.HOME = `${home}/`;
+    expect((await cli(["check", "--project", path.join(home, "new-folder")])).code).toBe(2);
   });
 
   it("treats . and .. as paths, not project ids", async () => {
@@ -357,6 +363,21 @@ describe("ui", () => {
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
+  it("treats a 5xx answer as not up yet, and lets the launcher's own port check decide", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    process.env.PATH = "";
+    up(503, 200);
+    h.spawn.mockReturnValue(new FakeApp());
+    expect((await cli(["ui"], { timers: tick(2000) })).out).toMatch(/^Memory Audit is running/);
+    expect(h.spawn).toHaveBeenCalled();
+  });
+
+  it("says a running app shows the projects folder it was started with", async () => {
+    process.env.CLAUDE_CONFIG_DIR = path.join(sb.base, "work");
+    up(200);
+    expect((await cli(["ui"])).out).toMatch(/shows the projects folder it was started with/);
+  });
+
   it("won't mistake another app on the port for Memory Audit", async () => {
     up(404);
     const r = await cli(["ui", "--port", "4000"]);
@@ -401,7 +422,7 @@ describe("ui", () => {
     // An earlier run's output is already in the log; only this run's lines are shown.
     const logFile = path.join(sb.base, ".memory-audit", "ui.log");
     mkdirSync(path.dirname(logFile), { recursive: true });
-    writeFileSync(logFile, "old run\n");
+    writeFileSync(logFile, "old run ▲ ✓ — multi-byte characters\n");
     const app = new FakeApp();
     h.spawn.mockImplementation(() => {
       writeFileSync(logFile, "Port 3210 is already in use.\n", { flag: "a" });

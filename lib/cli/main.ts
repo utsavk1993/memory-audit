@@ -23,7 +23,7 @@ import { auditProject } from "../audit/checks";
 import { buildContext, JSON_SHAPE, lastResult, Output, saveResult, SYSTEM, toResult } from "../audit/evidence";
 import type { NoteAudit, Severity } from "../audit/types";
 import { addToIndex, ConflictError, listBackups, removeBrokenLinks, restoreBackup, sha, writeNote } from "../audit/writer";
-import { pickLauncher, spawnCommand, stopHint } from "./launcher";
+import { pathKey, pickLauncher, spawnCommand, stopHint } from "./launcher";
 import { BadRequestError, listProjects, NotFoundError, projectsRoot, readMemory } from "../claude-code/reader";
 
 class UsageError extends Error {}
@@ -89,11 +89,13 @@ async function resolveProject(): Promise<{ id: string; path: string }> {
     return { id: given, path: projects.find((p) => p.id === given)?.path ?? given };
   const start = path.resolve(given ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
   // Both spellings of home: as given (minus any trailing slash) and with symlinks resolved.
-  const homes = new Set([path.resolve(homedir()), realpathOr(homedir())]);
+  // macOS and Windows file systems ignore case, so compare paths that way there.
+  const norm = pathKey(process.platform);
+  const homes = new Set([path.resolve(homedir()), realpathOr(homedir())].map(norm));
   // Walk up from the folder so a session started in a subfolder still finds its project, but never up to
   // your home folder: a new folder inside it must not silently use (and edit) the home folder's memory.
   for (let dir = start; ; dir = path.dirname(dir)) {
-    if (homes.has(dir) && !homes.has(start)) break;
+    if (homes.has(norm(dir)) && !homes.has(norm(start))) break;
     const id = encode(dir);
     const match = existsSync(path.join(root, id)) ? { id } : projects.find((p) => p.path === dir);
     if (match) {
@@ -144,7 +146,7 @@ async function check() {
   for (const n of flagged) printNote(n, results.get(n.file) ?? null);
   const quiet = notes.filter((n) => n.status === "info" || n.status === "ok");
   if (quiet.length) {
-    out(`✓ ${quiet.length} note${quiet.length > 1 ? "s" : ""} with no warning signs:`);
+    out(`✓ ${plural(quiet.length, "note")} with no warning signs:`);
     for (const n of quiet) {
       const ai = results.get(n.file);
       out(`  ${n.file}${ai ? `  (AI check: ${ai.verdict}, ${ai.ranAt.slice(0, 10)})` : ""}`);
@@ -216,7 +218,7 @@ async function saveResultCmd() {
 
   out(`Saved. Verdict: ${result.verdict} (${result.confidence} confidence). The web UI now shows this result too.`);
   if (droppedCitations)
-    out(`Dropped ${droppedCitations} citation${droppedCitations > 1 ? "s" : ""} that didn't match a real log line.`);
+    out(`Dropped ${plural(droppedCitations, "citation")} that didn't match a real log line.`);
   if (downgradedClaims)
     out(
       `${downgradedClaims} claim${downgradedClaims > 1 ? "s were" : " was"} left with no real citation, so ${downgradedClaims > 1 ? "they count" : "it counts"} as unverified.`,
@@ -276,7 +278,7 @@ async function removeBrokenLinksCmd() {
   const project = await resolveProject();
   const r = await removeBrokenLinks(project.id);
   if (!r.removed.length) return out("MEMORY.md has no links to missing notes.");
-  out(`Removed ${r.removed.length} line${r.removed.length > 1 ? "s" : ""} from MEMORY.md:`);
+  out(`Removed ${plural(r.removed.length, "line")} from MEMORY.md:`);
   for (const l of r.removed) out(`  ${l}`);
 }
 
@@ -288,6 +290,7 @@ async function ui() {
   const probe = async (): Promise<"ours" | "other" | "down"> => {
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(1500) });
+      if (r.status >= 500) return "down"; // maybe Memory Audit mid-restart: let the launcher's own port check decide
       return r.ok && (await r.text()).includes("<title>Memory Audit") ? "ours" : "other";
     } catch {
       return "down";
@@ -298,6 +301,8 @@ async function ui() {
     out(`Memory Audit is already running: ${url}`);
     if (flags.has("--readonly"))
       out("It was started earlier, so --readonly doesn't apply to it. To be sure it can't write, stop it and run this again.");
+    if (process.env.CLAUDE_CONFIG_DIR)
+      out("It shows the projects folder it was started with. If that was a different CLAUDE_CONFIG_DIR, stop it and run this again.");
     return;
   }
   if (before === "other") throw new UsageError(`Another app is using port ${port}. Pick a free one with --port, e.g. --port ${otherPort(port)}.`);
@@ -332,7 +337,8 @@ async function ui() {
   for (let i = 0; i < 90; i++) {
     if (exited !== undefined) {
       // Show what the launcher said (busy port, not built, download failed…) rather than guessing.
-      const said = readFileSync(logFile, "utf8").slice(logStart).trim().split("\n").slice(-8).join("\n");
+      // logStart is a byte offset, so cut the bytes before decoding (the log has multi-byte characters).
+      const said = readFileSync(logFile).subarray(logStart).toString("utf8").trim().split("\n").slice(-8).join("\n");
       throw new UsageError(
         `Memory Audit couldn't start (${launch.label} exited). ` +
           (said

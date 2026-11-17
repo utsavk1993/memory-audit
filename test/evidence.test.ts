@@ -144,6 +144,12 @@ describe("toResult", () => {
     expect(kept.summary).toBe("s");
     expect(kept.reasons[1].explanation).toBe("e");
 
+    // No claims at all means nothing is cited, so the verdict is unverified whatever the model said.
+    const empty = toResult(c, "db.md", out({ verdict: "supported", claims: [] }), meta);
+    expect(empty).toMatchObject({ verdict: "unverified", confidence: "low" });
+    expect(empty.summary).toBe("The AI listed no claims with cited log lines, so this counts as unverified. The AI's summary: s");
+    expect(toResult(c, "db.md", out({ verdict: "unverified", claims: [] }), meta)).toMatchObject({ confidence: "high", summary: "s" });
+
     // The verdict follows the claims even when the model's own verdict disagrees with them.
     const green = toResult(c, "db.md", out({ verdict: "supported", claims: [claim("contradicted", [{ session: "S1", line: 1 }])] }), meta);
     expect(green.verdict).toBe("contradicted");
