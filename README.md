@@ -152,6 +152,7 @@ Found a security problem? Please report it privately; see [SECURITY.md](SECURITY
 | `--port <n>` | `3210` | Port |
 | `--no-open` | | Don't open the browser |
 | `--readonly` | | Never write to memory |
+| `--version` | | Print the version |
 | `ANTHROPIC_API_KEY` | | AI check with Claude |
 | `NVIDIA_API_KEY` | | AI check with NVIDIA |
 | `MEMORY_AUDIT_PROVIDER` | `claude-code` if installed | `claude-code`, `anthropic` or `nvidia` |

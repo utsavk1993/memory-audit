@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Start Memory Audit on this machine and open it in the browser.
-//   npx memory-audit [--port 3210] [--no-open] [--readonly]
+//   npx memory-audit [--port 3210] [--no-open] [--readonly] [--version]
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,7 +24,29 @@ if (args[0] && COMMANDS.includes(args[0])) {
   cli.on("exit", (code) => process.exit(code ?? 1));
 } else main();
 
-function main() {
+// Resolves true when nothing is listening on 127.0.0.1:<port>.
+function portFree(port) {
+  return new Promise((resolve) => {
+    const srv = createServer()
+      .once("error", () => resolve(false))
+      .once("listening", () => srv.close(() => resolve(true)));
+    srv.listen(Number(port), "127.0.0.1");
+  });
+}
+
+async function main() {
+if (flag("--version") || flag("-v")) {
+  console.log(JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version);
+  process.exit(0);
+}
+
+const KNOWN = ["--port", "--no-open", "--readonly", "--help", "-h"];
+const unknown = args.filter((a, i) => !KNOWN.includes(a) && args[i - 1] !== "--port");
+if (unknown.length) {
+  console.error(`Unknown option: ${unknown[0]}\nRun \`npx memory-audit --help\` for options, or \`npx memory-audit help\` for terminal commands.`);
+  process.exit(1);
+}
+
 if (flag("--help") || flag("-h")) {
   console.log(`Memory Audit: inspect and fix your Claude Code memory notes.
 
@@ -33,6 +56,7 @@ Usage: npx memory-audit [options]
   --port <n>     Port to listen on (default 3210)
   --no-open      Don't open the browser
   --readonly     Never write to your memory folder
+  --version      Print the version
 
 Environment:
   ANTHROPIC_API_KEY         AI check with Claude
@@ -45,6 +69,12 @@ Environment:
 const port = value("--port", process.env.PORT ?? "3210");
 if (!/^\d+$/.test(port)) {
   console.error("--port must be a number");
+  process.exit(1);
+}
+if (!(await portFree(port))) {
+  console.error(`Port ${port} is already in use.
+  If Memory Audit is already running, open http://127.0.0.1:${port}
+  Otherwise start it on another port: npx memory-audit --port ${Number(port) + 1}`);
   process.exit(1);
 }
 if (!existsSync(path.join(root, ".next", "BUILD_ID"))) {
