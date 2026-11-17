@@ -1,0 +1,5 @@
+- [Deploy process](deploy-process.md) — how to deploy the storefront to Heroku from main
+- [Testing preferences](testing-preferences.md) — vitest before every commit, no snapshot tests
+- [Database conventions](db-conventions.md) — Postgres through Prisma, snake_case tables
+- [Release checklist](release-checklist.md) — steps before tagging a release
+- [Stripe keys](stripe-keys.md) — where the test and live keys live

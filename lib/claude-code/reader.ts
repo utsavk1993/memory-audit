@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { demoFileTime, demoProjectsRoot, isDemo } from "../demo";
 import type {
   MemoryFile,
   MemoryFileSummary,
@@ -25,6 +26,7 @@ export class NotFoundError extends Error {}
 export class BadRequestError extends Error {}
 
 export function projectsRoot(): string {
+  if (isDemo()) return demoProjectsRoot();
   return path.resolve(process.env.MEMORY_AUDIT_CLAUDE_DIR ?? path.join(homedir(), ".claude", "projects"));
 }
 
@@ -35,6 +37,9 @@ export function child(base: string, name: string): string {
   if (path.dirname(p) !== base) throw new BadRequestError("Invalid name");
   return p;
 }
+
+/** A file's last-modified time; the demo's come from its logs (see demoFileTime). */
+const mtimeOf = (p: string, s: { mtime: Date }) => (isDemo() && demoFileTime(p)) || s.mtime;
 
 async function statOrNull(p: string) {
   try {
@@ -128,15 +133,17 @@ async function summarize(id: string): Promise<ProjectSummary> {
   let cwd: string | null = null;
   let updated = 0;
   for (const f of sessions) {
-    const s = await statOrNull(path.join(dir, f));
+    const p = path.join(dir, f);
+    const s = await statOrNull(p);
     /* v8 ignore next -- s is only null if the file was deleted after it was listed */
-    if (s) updated = Math.max(updated, s.mtimeMs);
+    if (s) updated = Math.max(updated, mtimeOf(p, s).getTime());
     if (!cwd) cwd = (await scanSession(path.join(dir, f)).catch(() => null))?.cwd ?? null;
   }
   for (const f of memory) {
-    const s = await statOrNull(path.join(dir, "memory", f));
+    const p = path.join(dir, "memory", f);
+    const s = await statOrNull(p);
     /* v8 ignore next -- s is only null if the file was deleted after it was listed */
-    if (s) updated = Math.max(updated, s.mtimeMs);
+    if (s) updated = Math.max(updated, mtimeOf(p, s).getTime());
   }
   const p = cwd ?? guessPath(id);
   return {
@@ -181,7 +188,7 @@ export async function getProject(id: string): Promise<ProjectDetail> {
         description: frontmatter.description ?? null,
         type: frontmatter.type ?? null,
         size: s.size,
-        updatedAt: s.mtime.toISOString(),
+        updatedAt: mtimeOf(p, s).toISOString(),
         inIndex: linked.has(file),
       };
     }),
@@ -197,7 +204,7 @@ export async function getProject(id: string): Promise<ProjectDetail> {
         id,
         title: scan.title ?? id.slice(0, 8),
         size: s.size,
-        updatedAt: s.mtime.toISOString(),
+        updatedAt: mtimeOf(p, s).toISOString(),
         startedAt: scan.startedAt,
         messageCount: scan.messageCount,
       };
@@ -247,7 +254,7 @@ export async function readMemory(projectId: string, file: string): Promise<Memor
     frontmatter,
     body,
     raw,
-    updatedAt: s.mtime.toISOString(),
+    updatedAt: mtimeOf(p, s).toISOString(),
     sha: createHash("sha256").update(raw).digest("hex"),
   };
 }

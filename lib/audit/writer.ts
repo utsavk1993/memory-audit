@@ -7,6 +7,7 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { BadRequestError, NotFoundError, child, getProject, memoryDirOf, parseFrontmatter } from "../claude-code/reader";
+import { DEMO_READONLY, isDemo } from "../demo";
 import type { Backup } from "./types";
 
 export class ConflictError extends Error {}
@@ -18,7 +19,7 @@ export function backupsRoot(): string {
 }
 
 export function writesEnabled() {
-  return process.env.MEMORY_AUDIT_READONLY !== "1";
+  return process.env.MEMORY_AUDIT_READONLY !== "1" && !isDemo();
 }
 
 function notePath(projectId: string, file: string) {
@@ -58,6 +59,7 @@ export async function writeNote(
   expectedSha: string | null,
   reason: string,
 ): Promise<{ backup: Backup | null; sha: string }> {
+  if (isDemo()) throw new BadRequestError(DEMO_READONLY);
   if (!writesEnabled()) throw new BadRequestError("Writes are turned off (MEMORY_AUDIT_READONLY=1)");
   if (newRaw.length > 200_000) throw new BadRequestError("Note is too large");
   const p = notePath(projectId, file);
