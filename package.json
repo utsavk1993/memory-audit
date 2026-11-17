@@ -46,7 +46,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "prepack": "next build && node scripts/build-cli.mjs && node scripts/scrub-build-paths.mjs",
     "build:plugin": "node scripts/build-cli.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
@@ -63,6 +64,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitest/coverage-v8": "^4.1.12",
     "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",

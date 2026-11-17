@@ -25,16 +25,12 @@ export function sandbox(): Sandbox {
   const memDir = path.join(projectDir, "memory");
   mkdirSync(memDir, { recursive: true });
 
-  const prev = {
-    claude: process.env.MEMORY_AUDIT_CLAUDE_DIR,
-    backup: process.env.MEMORY_AUDIT_BACKUP_DIR,
-    readonly: process.env.MEMORY_AUDIT_READONLY,
-  };
+  // Tests may change any variable (HOME, API keys, …); put the whole environment back afterwards.
+  const envBefore = { ...process.env };
   process.env.MEMORY_AUDIT_CLAUDE_DIR = projects;
   process.env.MEMORY_AUDIT_BACKUP_DIR = backups;
+  process.env.MEMORY_AUDIT_DATA_DIR = path.join(base, "results");
   delete process.env.MEMORY_AUDIT_READONLY;
-
-  const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
 
   return {
     base,
@@ -52,9 +48,8 @@ export function sandbox(): Sandbox {
       return p;
     },
     cleanup() {
-      restore("MEMORY_AUDIT_CLAUDE_DIR", prev.claude);
-      restore("MEMORY_AUDIT_BACKUP_DIR", prev.backup);
-      restore("MEMORY_AUDIT_READONLY", prev.readonly);
+      for (const k of Object.keys(process.env)) if (!(k in envBefore)) delete process.env[k];
+      Object.assign(process.env, envBefore);
       rmSync(base, { recursive: true, force: true });
     },
   };

@@ -32,7 +32,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      # Fails if line, branch, function or statement coverage drops below 100% (see vitest.config.mts).
+      - run: npm run test:coverage
 
   build:
     name: Build

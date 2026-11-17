@@ -187,6 +187,7 @@ npm install
 npm run dev            # http://127.0.0.1:3210
 npm run typecheck && npm run lint
 npm test               # unit tests (vitest)
+npm run test:coverage  # same, and fails below 100% coverage
 npm run build && npm start
 npm run build:plugin   # rebuild plugin/dist/cli.mjs after changing lib/
 ```
@@ -238,11 +239,11 @@ Contributions are welcome: bug reports, ideas, docs and code.
 
    ```bash
    npm run typecheck && npm run lint
-   npm test
+   npm run test:coverage
    npm run build          # also rebuilds plugin/dist/cli.mjs
    ```
 
-   CI runs the same checks on every pull request, plus CodeQL and a dependency audit. Add a test in `test/` for new logic in `lib/`.
+   CI runs the same checks on every pull request, plus CodeQL and a dependency audit. Server code (`lib/`, `app/api/`, `proxy.ts`) must stay at **100% test coverage** (lines, branches, functions and statements), so add tests in `test/` with any change there. `coverage/index.html` shows what's missing.
 
    If you changed anything in `lib/`, commit the rebuilt `plugin/dist/cli.mjs` too: the plugin installs straight from this repo.
 5. Open a pull request against `main`. Say what changed and why, and add a screenshot or short clip for UI changes.

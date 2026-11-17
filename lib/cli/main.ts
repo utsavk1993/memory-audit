@@ -313,7 +313,8 @@ async function main() {
   await run();
 }
 
-main().catch((e: Error) => {
+/** Settles when the command has finished (the tests await it). */
+export const done = main().catch((e: Error) => {
   const known = e instanceof UsageError || e instanceof NotFoundError || e instanceof BadRequestError || e instanceof ConflictError;
   process.stderr.write(`memory-audit: ${known ? e.message : (e.stack ?? e.message)}\n`);
   process.exit(known ? 2 : 1);

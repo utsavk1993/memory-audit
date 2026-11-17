@@ -262,7 +262,8 @@ export async function auditProject(projectId: string): Promise<ProjectAudit> {
   const project = await getProject(projectId);
   const sessions = (await readAllSessions(projectId)).sort((a, b) => (a.startedAt ?? "").localeCompare(b.startedAt ?? ""));
   const hasIndex = project.memory.some((m) => m.isIndex);
-  const files = await Promise.all(project.memory.filter((m) => !m.isIndex).map((m) => readMemory(projectId, m.file)));
+  const listed = project.memory.filter((m) => !m.isIndex);
+  const files = await Promise.all(listed.map((m) => readMemory(projectId, m.file)));
 
   const projectFindings: Finding[] = [];
   if (!hasIndex && files.length)
@@ -302,12 +303,11 @@ export async function auditProject(projectId: string): Promise<ProjectAudit> {
     });
 
   const notes: NoteAudit[] = [];
-  for (const m of files) {
-    const s = project.memory.find((x) => x.file === m.file);
+  for (const [i, m] of files.entries()) {
     notes.push(
       auditNote(m, {
         sessions,
-        inIndex: s?.inIndex ?? false,
+        inIndex: listed[i].inIndex,
         hasIndex,
         projectPath: project.path,
         missing: await missingPaths(m.body, project.path),
