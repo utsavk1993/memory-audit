@@ -13,7 +13,7 @@
 // Every command takes --project <id-or-path>; by default the project is the current folder.
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -23,7 +23,7 @@ import { auditProject } from "../audit/checks";
 import { buildContext, JSON_SHAPE, lastResult, Output, saveResult, SYSTEM, toResult } from "../audit/evidence";
 import type { NoteAudit, Severity } from "../audit/types";
 import { addToIndex, ConflictError, listBackups, removeBrokenLinks, restoreBackup, sha, writeNote } from "../audit/writer";
-import { pathKey, pickLauncher, spawnCommand, stopHint } from "./launcher";
+import { pickLauncher, spawnCommand, stopHint } from "./launcher";
 import { BadRequestError, listProjects, NotFoundError, projectsRoot, readMemory } from "../claude-code/reader";
 
 class UsageError extends Error {}
@@ -65,13 +65,26 @@ const [cmd, ...args] = pos;
 const opt = (k: string) => (typeof flags.get(k) === "string" ? (flags.get(k) as string) : undefined);
 const out = (s = "") => process.stdout.write(`${s}\n`);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-const realpathOr = (p: string) => {
+/** True when both paths are the same folder on disk; when either is missing, when they are equal as paths. */
+const sameFolder = (a: string, b: string) => {
   try {
-    return realpathSync(p);
+    const [x, y] = [statSync(a), statSync(b)];
+    return x.dev === y.dev && x.ino === y.ino;
   } catch {
-    return path.resolve(p);
+    return path.resolve(a) === path.resolve(b);
   }
 };
+/** A file's text from a byte offset on, without reading what comes before it. */
+function readFrom(file: string, offset: number) {
+  const fd = openSync(file, "r");
+  try {
+    const buf = Buffer.alloc(Math.max(0, fstatSync(fd).size - offset));
+    readSync(fd, buf, 0, buf.length, offset);
+    return buf.toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
 /** A port to suggest instead of a busy one. */
 const otherPort = (port: string) => (Number(port) < 65535 ? Number(port) + 1 : Number(port) - 1);
 
@@ -88,16 +101,18 @@ async function resolveProject(): Promise<{ id: string; path: string }> {
   if (given && !/[\\/]/.test(given) && given !== "." && given !== ".." && existsSync(path.join(root, given)))
     return { id: given, path: projects.find((p) => p.id === given)?.path ?? given };
   const start = path.resolve(given ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
-  // Both spellings of home: as given (minus any trailing slash) and with symlinks resolved.
-  // macOS and Windows file systems ignore case, so compare paths that way there.
-  const norm = pathKey(process.platform);
-  const homes = new Set([path.resolve(homedir()), realpathOr(homedir())].map(norm));
+  // "Is this folder home?" compares the folders on disk (same device and inode), so a trailing slash, a
+  // symlink or a different letter case (macOS, Windows) can't slip past the guard.
+  const atHome = (d: string) => sameFolder(d, homedir());
   // Walk up from the folder so a session started in a subfolder still finds its project, but never up to
   // your home folder: a new folder inside it must not silently use (and edit) the home folder's memory.
   for (let dir = start; ; dir = path.dirname(dir)) {
-    if (homes.has(norm(dir)) && !homes.has(norm(start))) break;
+    if (atHome(dir) && !atHome(start)) break;
     const id = encode(dir);
-    const match = existsSync(path.join(root, id)) ? { id } : projects.find((p) => p.path === dir);
+    // On a case-insensitive disk a differently-cased path finds the folder too, so use the real folder's name.
+    const folder = path.join(root, id);
+    const onDisk = existsSync(folder) ? (projects.find((p) => sameFolder(path.join(root, p.id), folder)) ?? { id }) : undefined;
+    const match = onDisk ?? projects.find((p) => p.path === dir);
     if (match) {
       if (dir !== start) process.stderr.write(`memory-audit: using the project for ${dir} (there is none for ${start}).\n`);
       return { id: match.id, path: dir };
@@ -221,7 +236,7 @@ async function saveResultCmd() {
     out(`Dropped ${plural(droppedCitations, "citation")} that didn't match a real log line.`);
   if (downgradedClaims)
     out(
-      `${downgradedClaims} claim${downgradedClaims > 1 ? "s were" : " was"} left with no real citation, so ${downgradedClaims > 1 ? "they count" : "it counts"} as unverified.`,
+      `${plural(downgradedClaims, "claim")} had no real citation, so ${downgradedClaims === 1 ? "it counts" : "they count"} as unverified.`,
     );
   for (const r of result.reasons)
     out(`  ${r.status.padEnd(12)} ${r.claim}${r.evidence.length ? `  [${r.evidence.map((e) => `“${e.sessionTitle.slice(0, 40)}” line ${e.line}`).join("; ")}]` : ""}`);
@@ -282,16 +297,30 @@ async function removeBrokenLinksCmd() {
   for (const l of r.removed) out(`  ${l}`);
 }
 
+/** True when the running app lists the same projects this CLI sees (so it reads the same folder). */
+async function sameProjects(url: string) {
+  try {
+    const r = await fetch(`${url}/api/claude-code/projects`, { signal: AbortSignal.timeout(3000) });
+    const theirs = ((await r.json()) as { id: string }[]).map((p) => p.id).sort();
+    const ours = (await listProjects()).map((p) => p.id).sort();
+    return theirs.join("\n") === ours.join("\n");
+  } catch {
+    return true; // can't tell: say nothing rather than guess
+  }
+}
+
 async function ui() {
-  const port = opt("--port") ?? "3210";
-  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new UsageError("--port must be a number from 1 to 65535.");
+  // Same default as the launcher: --port, else $PORT, else 3210.
+  const port = opt("--port") ?? (process.env.PORT || "3210");
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)
+    throw new UsageError(`${opt("--port") ? "--port" : "PORT"} must be a number from 1 to 65535.`);
   const url = `http://127.0.0.1:${port}`;
   // "ours" only when the page is Memory Audit, so another app on the port isn't mistaken for it.
   const probe = async (): Promise<"ours" | "other" | "down"> => {
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(1500) });
-      if (r.status >= 500) return "down"; // maybe Memory Audit mid-restart: let the launcher's own port check decide
-      return r.ok && (await r.text()).includes("<title>Memory Audit") ? "ours" : "other";
+      if (!(await r.text()).includes("<title>Memory Audit")) return "other";
+      return r.ok ? "ours" : "down"; // Memory Audit answering with an error (e.g. mid-restart): not ready yet
     } catch {
       return "down";
     }
@@ -301,8 +330,10 @@ async function ui() {
     out(`Memory Audit is already running: ${url}`);
     if (flags.has("--readonly"))
       out("It was started earlier, so --readonly doesn't apply to it. To be sure it can't write, stop it and run this again.");
-    if (process.env.CLAUDE_CONFIG_DIR)
-      out("It shows the projects folder it was started with. If that was a different CLAUDE_CONFIG_DIR, stop it and run this again.");
+    // It lists projects from the folder it was started with (CLAUDE_CONFIG_DIR / MEMORY_AUDIT_CLAUDE_DIR). The list
+    // is read from disk on every request, so a different list means a different folder.
+    if (!(await sameProjects(url)))
+      out("It shows a different projects folder than this one (it was started with other settings). Stop it and run this again to see these projects.");
     return;
   }
   if (before === "other") throw new UsageError(`Another app is using port ${port}. Pick a free one with --port, e.g. --port ${otherPort(port)}.`);
@@ -337,8 +368,7 @@ async function ui() {
   for (let i = 0; i < 90; i++) {
     if (exited !== undefined) {
       // Show what the launcher said (busy port, not built, download failed…) rather than guessing.
-      // logStart is a byte offset, so cut the bytes before decoding (the log has multi-byte characters).
-      const said = readFileSync(logFile).subarray(logStart).toString("utf8").trim().split("\n").slice(-8).join("\n");
+      const said = readFrom(logFile, logStart).trim().split("\n").slice(-8).join("\n");
       throw new UsageError(
         `Memory Audit couldn't start (${launch.label} exited). ` +
           (said

@@ -112,6 +112,7 @@ describe("finding the project", () => {
 
   it("never walks up to the home folder's project from a folder inside it", async () => {
     const home = path.join(sb.base, "home");
+    mkdirSync(home);
     process.env.HOME = home;
     mkdirSync(path.join(sb.projects, home.replace(/[^A-Za-z0-9]/g, "-")), { recursive: true });
     const inside = await cli(["check", "--project", path.join(home, "new-folder")]);
@@ -124,6 +125,13 @@ describe("finding the project", () => {
     // A trailing slash on HOME doesn't defeat the guard either.
     process.env.HOME = `${home}/`;
     expect((await cli(["check", "--project", path.join(home, "new-folder")])).code).toBe(2);
+  });
+
+  it("reports the project's real folder name when a path in another letter case finds it (macOS, Windows)", async () => {
+    const r = await cli(["check", "--json", "--project", "/USERS/DEV/DEMO"]);
+    // Case-sensitive disks (Linux) have no such folder; elsewhere it is the same project, under its real id.
+    if (r.code === undefined) expect(JSON.parse(r.out).projectId).toBe(PROJECT);
+    else expect(r.err).toMatch(/No Claude Code project found/);
   });
 
   it("treats . and .. as paths, not project ids", async () => {
@@ -160,6 +168,8 @@ describe("finding the project", () => {
   it("takes an id that exists on disk even if it isn't a project folder", async () => {
     writeFileSync(path.join(sb.projects, "stray"), "");
     expect((await cli(["check", "--project", "stray"])).err).toMatch(/Project not found/);
+    writeFileSync(path.join(sb.projects, "-srv-stray"), ""); // the same, found by path
+    expect((await cli(["check", "--project", "/srv/stray"])).err).toMatch(/Project not found/);
   });
 });
 
@@ -253,7 +263,7 @@ describe("evidence and save-result", () => {
     expect(out).toContain("Dropped 1 citation that didn't match a real log line.");
     expect(out).toMatch(/ {2}outdated {5}alpha {2}\[“remember alpha first note” line 1\]/);
     expect(out).toContain("  unverified   beta\n");
-    expect(out).toContain("1 claim was left with no real citation, so it counts as unverified.");
+    expect(out).toContain("1 claim had no real citation, so it counts as unverified.");
     expect(out).toContain(`Proposed fix (note_sha ${sha(ALPHA)}):`);
     expect(out).toContain("- Alpha body\n+ Alpha body v2");
   });
@@ -263,7 +273,7 @@ describe("evidence and save-result", () => {
     writeFileSync(f, verdict({ proposed_note: "", claims: [{ claim: "c", status: "supported", explanation: "e", evidence: [{ session: "S8", line: 1 }, { session: "S9", line: 1 }] }, { claim: "d", status: "supported", explanation: "e", evidence: [] }] }));
     const { out } = await cli(["save-result", "alpha", f]);
     expect(out).toContain("Dropped 2 citations");
-    expect(out).toContain("2 claims were left with no real citation, so they count as unverified.");
+    expect(out).toContain("2 claims had no real citation, so they count as unverified.");
     expect(out).toContain("No fix proposed");
   });
 
@@ -351,11 +361,36 @@ describe("ui", () => {
     await vi.advanceTimersByTimeAsync(ms);
   };
 
+  // A running Memory Audit: its page, and its project list (by default the same projects this CLI sees).
+  const running = (projects: object[] = [{ id: PROJECT }]) => {
+    const f = vi.fn(async (url: string) =>
+      url.endsWith("/api/claude-code/projects") ? Response.json(projects) : new Response("<title>Memory Audit</title>"),
+    );
+    vi.stubGlobal("fetch", f);
+    return f;
+  };
+
   it("reports Memory Audit when it's already running, and warns that --readonly can't apply to it", async () => {
-    up(200, 200);
+    running();
     expect((await cli(["ui", "--port", "4000"])).out).toBe("Memory Audit is already running: http://127.0.0.1:4000\n");
     expect((await cli(["ui", "--readonly"])).out).toMatch(/already running[\s\S]*--readonly doesn't apply/);
     expect(h.spawn).not.toHaveBeenCalled();
+  });
+
+  it("says when the running app shows a different projects folder", async () => {
+    running([{ id: "-Users-someone-else" }]);
+    expect((await cli(["ui"])).out).toMatch(/shows a different projects folder than this one/);
+    // If its list can't be read, it says nothing rather than guess.
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => (url.endsWith("/projects") ? new Response("not json") : new Response("<title>Memory Audit</title>"))));
+    expect((await cli(["ui"])).out).toBe("Memory Audit is already running: http://127.0.0.1:3210\n");
+  });
+
+  it("uses $PORT like the launcher, and checks it", async () => {
+    running();
+    process.env.PORT = "4100";
+    expect((await cli(["ui"])).out).toBe("Memory Audit is already running: http://127.0.0.1:4100\n");
+    process.env.PORT = "abc";
+    expect((await cli(["ui"])).err).toMatch(/PORT must be a number from 1 to 65535/);
   });
 
   it("checks the port before anything else", async () => {
@@ -363,19 +398,18 @@ describe("ui", () => {
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
-  it("treats a 5xx answer as not up yet, and lets the launcher's own port check decide", async () => {
+  it("treats Memory Audit answering with an error as not ready yet, but any other app's error as another app", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout"] });
     process.env.PATH = "";
-    up(503, 200);
+    const f = vi.fn()
+      .mockResolvedValueOnce(new Response("<title>Memory Audit</title> restarting", { status: 503 }))
+      .mockResolvedValue(new Response("<title>Memory Audit</title>"));
+    vi.stubGlobal("fetch", f);
     h.spawn.mockReturnValue(new FakeApp());
     expect((await cli(["ui"], { timers: tick(2000) })).out).toMatch(/^Memory Audit is running/);
     expect(h.spawn).toHaveBeenCalled();
-  });
-
-  it("says a running app shows the projects folder it was started with", async () => {
-    process.env.CLAUDE_CONFIG_DIR = path.join(sb.base, "work");
-    up(200);
-    expect((await cli(["ui"])).out).toMatch(/shows the projects folder it was started with/);
+    up(502);
+    expect((await cli(["ui"])).err).toMatch(/Another app is using port 3210/);
   });
 
   it("won't mistake another app on the port for Memory Audit", async () => {

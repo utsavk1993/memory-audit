@@ -2,7 +2,7 @@
 
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { pathKey, pickLauncher, spawnCommand, stopHint } from "@/lib/cli/launcher";
+import { pickLauncher, spawnCommand, stopHint } from "@/lib/cli/launcher";
 
 const PKG = path.resolve("/pkg/node_modules/memory-audit");
 const base = { selfFile: path.join(PKG, "plugin", "dist", "cli.mjs"), platform: "darwin" as const, execPath: "/node" };
@@ -78,13 +78,5 @@ describe("stopHint", () => {
     expect(stopHint(42, "linux")).toBe("kill -- -42");
     expect(stopHint(42, "win32")).toBe("taskkill /PID 42 /T /F");
     expect(stopHint(undefined, "linux")).toBe("");
-  });
-});
-
-describe("pathKey", () => {
-  it("ignores case on macOS and Windows only", () => {
-    expect(pathKey("darwin")("/Users/Jane")).toBe("/users/jane");
-    expect(pathKey("win32")("C:\\Users\\Jane")).toBe("c:\\users\\jane");
-    expect(pathKey("linux")("/home/Jane")).toBe("/home/Jane");
   });
 });

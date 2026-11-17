@@ -148,7 +148,7 @@ describe("toResult", () => {
     const empty = toResult(c, "db.md", out({ verdict: "supported", claims: [] }), meta);
     expect(empty).toMatchObject({ verdict: "unverified", confidence: "low" });
     expect(empty.summary).toBe("The AI listed no claims with cited log lines, so this counts as unverified. The AI's summary: s");
-    expect(toResult(c, "db.md", out({ verdict: "unverified", claims: [] }), meta)).toMatchObject({ confidence: "high", summary: "s" });
+    expect(toResult(c, "db.md", out({ verdict: "unverified", claims: [] }), meta)).toMatchObject({ confidence: "low", summary: "s" });
 
     // The verdict follows the claims even when the model's own verdict disagrees with them.
     const green = toResult(c, "db.md", out({ verdict: "supported", claims: [claim("contradicted", [{ session: "S1", line: 1 }])] }), meta);

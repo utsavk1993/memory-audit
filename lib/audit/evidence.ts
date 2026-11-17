@@ -182,7 +182,7 @@ export function toResult(
     model: meta.model,
     verdict,
     // The model's confidence and summary were about its own citations; say plainly that some didn't hold up.
-    confidence: downgraded || noClaims ? "low" : out.confidence,
+    confidence: downgraded || !reasons.length ? "low" : out.confidence,
     summary: downgraded
       ? `${downgraded === 1 ? "1 claim cites" : `${downgraded} claims cite`} no real log line, so ${downgraded === 1 ? "it counts" : "they count"} as unverified. The AI's summary: ${out.summary}`
       : noClaims

@@ -85,7 +85,8 @@ if (problem === "EADDRINUSE") {
 }
 if (problem) {
   const why = problem === "EACCES" ? "permission denied (ports below 1024 usually need admin rights)" : problem;
-  console.error(`Can't use port ${port}: ${why}. Try another one, e.g. npx memory-audit --port ${portAt >= 0 ? 3210 : other}`);
+  // Suggest the default port, which needs no admin rights (or 3211 when the default is what failed).
+  console.error(`Can't use port ${port}: ${why}. Try another one, e.g. npx memory-audit --port ${port === "3210" ? 3211 : 3210}`);
   process.exit(1);
 }
 if (!existsSync(path.join(root, ".next", "BUILD_ID"))) {
