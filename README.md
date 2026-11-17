@@ -138,7 +138,10 @@ When running from source, you can put the key in `.env.local` instead. `MEMORY_A
 - 🏠 **Local only.** The server binds to `127.0.0.1` and rejects requests whose Host isn't local, which blocks DNS rebinding.
 - ✋ **No silent writes.** Endpoints that write files or spend money only accept requests from the app's own page: same origin plus a custom header. A write is refused if the note changed on disk since you opened it.
 - 📦 **Contained.** It can only read inside the projects folder and only write `.md` files in a project's `memory/` folder.
+- 🖼️ **No framing.** Pages send `X-Frame-Options: DENY`, so another site can't trick you into clicking through a hidden frame.
 - 👀 **Read-only mode.** `npx memory-audit --readonly` disables all writes.
+
+Found a security problem? Please report it privately; see [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -183,6 +186,7 @@ When running from source, you can put the key in `.env.local` instead. `MEMORY_A
 npm install
 npm run dev            # http://127.0.0.1:3210
 npm run typecheck && npm run lint
+npm test               # unit tests (vitest)
 npm run build && npm start
 npm run build:plugin   # rebuild plugin/dist/cli.mjs after changing lib/
 ```
@@ -234,8 +238,11 @@ Contributions are welcome: bug reports, ideas, docs and code.
 
    ```bash
    npm run typecheck && npm run lint
+   npm test
    npm run build          # also rebuilds plugin/dist/cli.mjs
    ```
+
+   CI runs the same checks on every pull request, plus CodeQL and a dependency audit. Add a test in `test/` for new logic in `lib/`.
 
    If you changed anything in `lib/`, commit the rebuilt `plugin/dist/cli.mjs` too: the plugin installs straight from this repo.
 5. Open a pull request against `main`. Say what changed and why, and add a screenshot or short clip for UI changes.
