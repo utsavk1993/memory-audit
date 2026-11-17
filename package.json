@@ -43,7 +43,7 @@
     "build": "next build && node scripts/build-cli.mjs",
     "start": "node bin/memory-audit.mjs",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "prepack": "next build && node scripts/build-cli.mjs && node scripts/scrub-build-paths.mjs",
     "build:plugin": "node scripts/build-cli.mjs",
     "test": "vitest run"
