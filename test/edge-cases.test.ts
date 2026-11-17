@@ -24,6 +24,9 @@ describe("defaults", () => {
     process.env.HOME = sb.base;
     expect(projectsRoot()).toBe(path.join(sb.base, ".claude", "projects"));
     expect(backupsRoot()).toBe(path.join(sb.base, ".memory-audit", "backups"));
+    // Claude Code's own CLAUDE_CONFIG_DIR moves its projects folder too.
+    process.env.CLAUDE_CONFIG_DIR = path.join(sb.base, "work-account");
+    expect(projectsRoot()).toBe(path.join(sb.base, "work-account", "projects"));
   });
 
   it("child refuses a base that isn't normalised", () => {

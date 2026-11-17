@@ -58,17 +58,19 @@ Usage: npx memory-audit [options]
   --readonly     Never write to your memory folder
   --version      Print the version
 
-Environment:
-  ANTHROPIC_API_KEY         AI check with Claude
-  NVIDIA_API_KEY            AI check with NVIDIA Nemotron
-  MEMORY_AUDIT_CLAUDE_DIR   Projects folder (default ~/.claude/projects)
-  MEMORY_AUDIT_MODEL        Model for the AI check (default claude-opus-5-5)`);
+Environment (all optional; see the README for the full list):
+  MEMORY_AUDIT_PROVIDER       claude-code (default when installed), anthropic or nvidia
+  ANTHROPIC_API_KEY           key for the anthropic provider
+  NVIDIA_API_KEY              key for the nvidia provider
+  MEMORY_AUDIT_CLAUDE_MODEL   model for the claude-code provider (default: your Claude Code default)
+  MEMORY_AUDIT_MODEL          model for the anthropic provider (default claude-opus-5-5)
+  MEMORY_AUDIT_CLAUDE_DIR     projects folder (default ~/.claude/projects, or $CLAUDE_CONFIG_DIR/projects)`);
   process.exit(0);
 }
 
-const port = value("--port", process.env.PORT ?? "3210");
-if (!/^\d+$/.test(port)) {
-  console.error("--port must be a number");
+const port = value("--port", "3210");
+if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+  console.error("--port must be a number from 1 to 65535");
   process.exit(1);
 }
 if (!(await portFree(port))) {

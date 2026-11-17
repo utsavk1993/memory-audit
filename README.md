@@ -94,6 +94,13 @@ Use whichever you prefer. The plugin and the web app share the same checks, save
 /plugin install memory-audit --marketplace utsavk1993/memory-audit
 ```
 
+On an older Claude Code without `--marketplace`, use two steps:
+
+```
+/plugin marketplace add utsavk1993/memory-audit
+/plugin install memory-audit@memory-audit
+```
+
 | Command | What it does |
 |---|---|
 | `/memory-audit:audit` | Quick checks for the current project. Lists flagged notes and offers the one-step index fixes. |
@@ -123,11 +130,13 @@ If Claude Code is installed and you're signed in, there's nothing to set up and 
 To use an API key instead (or if Claude Code isn't installed), set one of these and pick it with `MEMORY_AUDIT_PROVIDER`:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # Claude (default model claude-opus-5-5)
+export MEMORY_AUDIT_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-...   # Claude (default model claude-opus-5-5)
 # or
-export NVIDIA_API_KEY=nvapi-...       # NVIDIA (default model nvidia/nemotron-3-super-120b-a12b)
+export MEMORY_AUDIT_PROVIDER=nvidia NVIDIA_API_KEY=nvapi-...          # NVIDIA (default model nvidia/nemotron-3-super-120b-a12b)
 npx memory-audit
 ```
+
+Without `MEMORY_AUDIT_PROVIDER`, the app uses Claude Code whenever it's installed, even if a key is set.
 
 When running from source, you can put the key in `.env.local` instead. `MEMORY_AUDIT_PROVIDER` can be `claude-code` (the default when installed), `anthropic` or `nvidia`. NVIDIA is a third party that hasn't seen your logs before, so the app warns you before sending to it.
 
@@ -158,9 +167,9 @@ Found a security problem? Please report it privately; see [SECURITY.md](SECURITY
 | `MEMORY_AUDIT_PROVIDER` | `claude-code` if installed | `claude-code`, `anthropic` or `nvidia` |
 | `MEMORY_AUDIT_CLAUDE_MODEL` | your Claude Code default | Model for the Claude Code provider, e.g. `opus` |
 | `MEMORY_AUDIT_CLAUDE_BIN` | found automatically | Path to the `claude` command |
-| `MEMORY_AUDIT_MODEL` | `claude-opus-5-5` | Claude model |
+| `MEMORY_AUDIT_MODEL` | `claude-opus-5-5` | Claude model for the `anthropic` provider |
 | `MEMORY_AUDIT_NVIDIA_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | NVIDIA model |
-| `MEMORY_AUDIT_CLAUDE_DIR` | `~/.claude/projects` | Where to read projects from |
+| `MEMORY_AUDIT_CLAUDE_DIR` | `~/.claude/projects` | Where to read projects from (follows `CLAUDE_CONFIG_DIR` if you set it for Claude Code) |
 | `MEMORY_AUDIT_BACKUP_DIR` | `~/.memory-audit/backups` | Where backups go |
 | `MEMORY_AUDIT_DATA_DIR` | `~/.memory-audit/results` | Where AI results are cached |
 | `MEMORY_AUDIT_APP_DIR` | | For the plugin's `ui` command: a Memory Audit checkout to start the web app from |

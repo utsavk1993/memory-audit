@@ -17,11 +17,13 @@ import { existsSync, mkdirSync, openSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { diffLines } from "../diff";
 import { auditProject } from "../audit/checks";
 import { buildContext, JSON_SHAPE, lastResult, Output, saveResult, SYSTEM, toResult } from "../audit/evidence";
 import type { NoteAudit, Severity } from "../audit/types";
 import { addToIndex, ConflictError, listBackups, removeBrokenLinks, restoreBackup, sha, writeNote } from "../audit/writer";
+import { pickLauncher, stopHint } from "./launcher";
 import { BadRequestError, listProjects, NotFoundError, projectsRoot, readMemory } from "../claude-code/reader";
 
 class UsageError extends Error {}
@@ -29,11 +31,17 @@ class UsageError extends Error {}
 const argv = process.argv.slice(2);
 const flags = new Map<string, string | true>();
 const pos: string[] = [];
+const VALUE_FLAGS = ["--project", "--sha", "--port"];
+const KNOWN_FLAGS = [...VALUE_FLAGS, "--json", "--readonly", "--help"];
+const unknownFlags: string[] = [];
 for (let i = 0; i < argv.length; i++) {
-  const a = argv[i];
+  const [a, inline] = argv[i].startsWith("--") && argv[i].includes("=") ? [argv[i].slice(0, argv[i].indexOf("=")), argv[i].slice(argv[i].indexOf("=") + 1)] : [argv[i], undefined];
   if (a.startsWith("--")) {
+    // An unknown flag could mean the command acts on the wrong note or project, so it is an error (see run()).
+    if (!KNOWN_FLAGS.includes(a)) unknownFlags.push(a);
     const next = argv[i + 1];
-    if (next !== undefined && !next.startsWith("--") && ["--project", "--sha", "--port"].includes(a)) flags.set(a, argv[++i]);
+    if (inline !== undefined) flags.set(a, inline);
+    else if (next !== undefined && !next.startsWith("--") && VALUE_FLAGS.includes(a)) flags.set(a, argv[++i]);
     else flags.set(a, true);
   } else pos.push(a);
 }
@@ -51,15 +59,21 @@ async function resolveProject(): Promise<{ id: string; path: string }> {
   const given = opt("--project");
   const root = projectsRoot();
   const projects = await listProjects();
-  if (given && !given.includes("/") && existsSync(path.join(root, given)))
+  // A project id is a single folder name; ".", ".." and anything with a separator is a path.
+  if (given && !/[\\/]/.test(given) && given !== "." && given !== ".." && existsSync(path.join(root, given)))
     return { id: given, path: projects.find((p) => p.id === given)?.path ?? given };
   const start = path.resolve(given ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
-  // Walk up from the folder so a session started in a subfolder still finds its project.
+  const home = homedir();
+  // Walk up from the folder so a session started in a subfolder still finds its project, but never up to
+  // your home folder: a new folder inside it must not silently use (and edit) the home folder's memory.
   for (let dir = start; ; dir = path.dirname(dir)) {
+    if (dir === home && start !== home) break;
     const id = encode(dir);
-    if (existsSync(path.join(root, id))) return { id, path: dir };
-    const byPath = projects.find((p) => p.path === dir);
-    if (byPath) return { id: byPath.id, path: dir };
+    const match = existsSync(path.join(root, id)) ? { id } : projects.find((p) => p.path === dir);
+    if (match) {
+      if (dir !== start) process.stderr.write(`memory-audit: using the project for ${dir} (there is none for ${start}).\n`);
+      return { id: match.id, path: dir };
+    }
     if (path.dirname(dir) === dir) break;
   }
   throw new NotFoundError(
@@ -204,13 +218,14 @@ async function apply() {
   let next = await readInput(args[1]);
   if (!next.trim()) throw new UsageError("The new note is empty.");
   next = next.replace(/\s*$/, "\n");
+  // apply only replaces a note you reviewed; a mistyped name must not create a new one.
   const current = await readMemory(project.id, file).catch(() => null);
-  const r = await writeNote(project.id, file, next, current ? expected : null, "Edited from Claude Code (memory-audit plugin)");
-  if (current) {
-    out(`Updated ${file}.`);
-    out(unified(current.raw, next));
-  } else out(`Created ${file}.`);
-  if (r.backup) out(`Backup: ${r.backup.id}. Undo with \`memory-audit undo ${file}\` or the Undo button in the web UI.`);
+  if (!current) throw new NotFoundError(`${file} doesn't exist in this project. Check the name with \`memory-audit check\`.`);
+  const r = await writeNote(project.id, file, next, expected, "Edited from Claude Code (memory-audit plugin)");
+  out(`Updated ${file}.`);
+  out(unified(current.raw, next));
+  // Replacing an existing note always backs it up first.
+  out(`Backup: ${r.backup!.id}. Undo with \`memory-audit undo ${file}\` or the Undo button in the web UI.`);
 }
 
 async function undo() {
@@ -241,33 +256,46 @@ async function removeBrokenLinksCmd() {
 
 async function ui() {
   const port = opt("--port") ?? "3210";
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new UsageError("--port must be a number from 1 to 65535.");
   const url = `http://127.0.0.1:${port}`;
-  const up = async () => {
+  // "ours" only when the page is Memory Audit, so another app on the port isn't mistaken for it.
+  const probe = async (): Promise<"ours" | "other" | "down"> => {
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(1500) });
-      return r.ok || r.status < 500;
+      return r.ok && (await r.text()).includes("<title>Memory Audit") ? "ours" : "other";
     } catch {
-      return false;
+      return "down";
     }
   };
-  if (await up()) return out(`Memory Audit is already running: ${url}`);
+  const before = await probe();
+  if (before === "ours") {
+    out(`Memory Audit is already running: ${url}`);
+    if (flags.has("--readonly"))
+      out("It was started earlier, so --readonly doesn't apply to it. To be sure it can't write, stop it and run this again.");
+    return;
+  }
+  if (before === "other") throw new UsageError(`Another app is using port ${port}. Pick a free one with --port, e.g. --port ${Number(port) + 1}.`);
 
-  // A source checkout (MEMORY_AUDIT_APP_DIR), an installed `memory-audit` command, or npx, in that order.
-  const appDir = process.env.MEMORY_AUDIT_APP_DIR;
-  const launcher = appDir ? path.join(path.resolve(appDir), "bin", "memory-audit.mjs") : null;
-  const onPath = (process.env.PATH ?? "").split(path.delimiter).map((d) => path.join(d, "memory-audit")).find((p) => existsSync(p));
-  const [bin, binArgs] =
-    launcher && existsSync(launcher)
-      ? [process.execPath, [launcher]]
-      : onPath
-        ? [onPath, []]
-        : ["npx", ["--yes", "memory-audit"]];
+  const launch = pickLauncher({
+    appDir: process.env.MEMORY_AUDIT_APP_DIR,
+    selfFile: fileURLToPath(import.meta.url),
+    pathEnv: process.env.PATH,
+    platform: process.platform,
+    exists: existsSync,
+    execPath: process.execPath,
+  });
   const logDir = path.join(homedir(), ".memory-audit");
   mkdirSync(logDir, { recursive: true });
-  const log = openSync(path.join(logDir, "ui.log"), "a");
+  const logFile = path.join(logDir, "ui.log");
+  const log = openSync(logFile, "a");
   const extra = flags.has("--readonly") ? ["--readonly"] : [];
-  const app = spawn(bin, [...binArgs, "--port", port, "--no-open", ...extra], { detached: true, stdio: ["ignore", log, log] });
-  // If the launcher gives up (e.g. npx can't find the package), say so now instead of waiting out the timeout.
+  const app = spawn(launch.bin, [...launch.args, "--port", port, "--no-open", ...extra], {
+    detached: true,
+    shell: launch.shell,
+    windowsHide: true,
+    stdio: ["ignore", log, log],
+  });
+  // If the launcher gives up (e.g. npx can't download the package), say so now instead of waiting out the timeout.
   let exited: number | null | undefined;
   app.on("exit", (code) => (exited = code));
   app.on("error", () => (exited = -1));
@@ -276,13 +304,19 @@ async function ui() {
   for (let i = 0; i < 90; i++) {
     if (exited !== undefined)
       throw new UsageError(
-        `Memory Audit couldn't start (${bin === "npx" ? "npx memory-audit" : bin} exited). See ${path.join(logDir, "ui.log")}.\n` +
-          "Until the package is on npm, run `npm link` in a Memory Audit checkout, or set MEMORY_AUDIT_APP_DIR to it.",
+        `Memory Audit couldn't start (${launch.label} exited). See ${logFile}.\n` +
+          "Check your network connection, or install it once with `npm install -g memory-audit`.",
       );
-    if (await up()) return out(`Memory Audit is running: ${url}\nIt keeps running in the background; stop it with \`kill $(lsof -ti tcp:${port})\`.`);
+    if ((await probe()) === "ours") {
+      const stop = stopHint(app.pid, process.platform);
+      return out(`Memory Audit is running: ${url}\nIt keeps running in the background${stop ? `; stop it with \`${stop}\`` : ""}.`);
+    }
     await new Promise((r) => setTimeout(r, 1000));
   }
-  throw new UsageError(`Memory Audit didn't start within 90 seconds. See ${path.join(logDir, "ui.log")}.`);
+  throw new UsageError(
+    `Memory Audit is still starting after 90 seconds (the first run downloads it, which can be slow). ` +
+      `Run \`memory-audit ui\` again in a minute. Log: ${logFile}`,
+  );
 }
 
 const HELP = `memory-audit: check your Claude Code memory notes against your own session logs.
@@ -315,6 +349,7 @@ async function main() {
   if (!cmd || cmd === "help" || flags.has("--help")) return out(HELP);
   const run = COMMANDS[cmd];
   if (!run) throw new UsageError(`Unknown command "${cmd}".\n\n${HELP}`);
+  if (unknownFlags.length) throw new UsageError(`Unknown option ${unknownFlags[0]}. Options: ${KNOWN_FLAGS.join(", ")}.`);
   await run();
 }
 

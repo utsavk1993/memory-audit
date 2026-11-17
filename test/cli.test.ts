@@ -104,6 +104,39 @@ describe("finding the project", () => {
     expect((await cli(["check", "--project", "--json"])).code).toBe(2);
   });
 
+  it("says when it uses a parent folder's project", async () => {
+    const r = await cli(["check", "--project", "/Users/dev/demo/src/deep"]);
+    expect(r.err).toBe("memory-audit: using the project for /Users/dev/demo (there is none for /Users/dev/demo/src/deep).\n");
+    expect((await cli(["check"])).err).toBe(""); // exact match: no note
+  });
+
+  it("never walks up to the home folder's project from a folder inside it", async () => {
+    const home = path.join(sb.base, "home");
+    process.env.HOME = home;
+    mkdirSync(path.join(sb.projects, home.replace(/[^A-Za-z0-9]/g, "-")), { recursive: true });
+    const inside = await cli(["check", "--project", path.join(home, "new-folder")]);
+    expect(inside.code).toBe(2);
+    expect(inside.err).toMatch(/No Claude Code project found for/);
+    expect((await cli(["check", "--project", home])).out).toContain(`Memory Audit · ${home}`); // the home folder itself is fine
+  });
+
+  it("treats . and .. as paths, not project ids", async () => {
+    const cwd = process.cwd();
+    process.chdir(sb.base);
+    try {
+      for (const p of [".", ".."]) expect((await cli(["check", "--project", p])).err).toMatch(/No Claude Code project found for/);
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  it("accepts --flag=value and rejects options it doesn't know", async () => {
+    expect((await cli(["check", `--project=${PROJECT}`])).out).toContain(`project id ${PROJECT}`);
+    const r = await cli(["check", "--jsno"]);
+    expect(r.code).toBe(2);
+    expect(r.err).toMatch(/Unknown option --jsno\. Options: --project, --sha, --port, --json, --readonly, --help\./);
+  });
+
   it("takes an id that exists on disk even if it isn't a project folder", async () => {
     writeFileSync(path.join(sb.projects, "stray"), "");
     expect((await cli(["check", "--project", "stray"])).err).toMatch(/Project not found/);
@@ -246,8 +279,10 @@ describe("apply and undo", () => {
     expect((await cli(["apply", "alpha", "-", "--sha", "stale"], { stdin: "x" })).err).toMatch(/changed on disk/);
   });
 
-  it("creates a new note", async () => {
-    expect((await cli(["apply", "fresh", "-", "--sha", "any"], { stdin: "hello" })).out).toBe("Created fresh.md.\n");
+  it("refuses to create a note that doesn't exist (a mistyped name)", async () => {
+    const r = await cli(["apply", "fresh", "-", "--sha", "any"], { stdin: "hello" });
+    expect(r.code).toBe(2);
+    expect(r.err).toMatch(/fresh.md doesn't exist in this project/);
   });
 
   it("undo with no backups, and undo of a deleted note", async () => {
@@ -286,7 +321,7 @@ describe("ui", () => {
     const f = vi.fn();
     for (const s of statuses) {
       if (s instanceof Error) f.mockRejectedValueOnce(s);
-      else f.mockResolvedValueOnce(new Response(null, { status: s }));
+      else f.mockResolvedValueOnce(new Response(s === 200 ? "<html><head><title>Memory Audit</title>" : "other app", { status: s }));
     }
     f.mockRejectedValue(new Error("down"));
     vi.stubGlobal("fetch", f);
@@ -296,9 +331,22 @@ describe("ui", () => {
     await vi.advanceTimersByTimeAsync(ms);
   };
 
-  it("reports an app that's already running (any non-5xx answer)", async () => {
-    up(404);
+  it("reports Memory Audit when it's already running, and warns that --readonly can't apply to it", async () => {
+    up(200, 200);
     expect((await cli(["ui", "--port", "4000"])).out).toBe("Memory Audit is already running: http://127.0.0.1:4000\n");
+    expect((await cli(["ui", "--readonly"])).out).toMatch(/already running[\s\S]*--readonly doesn't apply/);
+    expect(h.spawn).not.toHaveBeenCalled();
+  });
+
+  it("checks the port before anything else", async () => {
+    for (const bad of ["abc", "0", "70000"]) expect((await cli(["ui", "--port", bad])).err).toMatch(/--port must be a number from 1 to 65535/);
+    expect(h.spawn).not.toHaveBeenCalled();
+  });
+
+  it("won't mistake another app on the port for Memory Audit", async () => {
+    up(404);
+    const r = await cli(["ui", "--port", "4000"]);
+    expect(r.err).toMatch(/Another app is using port 4000.*--port 4001/);
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
@@ -308,16 +356,23 @@ describe("ui", () => {
     mkdirSync(path.join(appDir, "bin"), { recursive: true });
     writeFileSync(path.join(appDir, "bin", "memory-audit.mjs"), "");
     process.env.MEMORY_AUDIT_APP_DIR = appDir;
-    up(500, new Error("down"), 200);
-    const app = new FakeApp();
+    up(new Error("down"), 500, 200);
+    const app = Object.assign(new FakeApp(), { pid: 4242 });
     h.spawn.mockReturnValue(app);
     const r = await cli(["ui", "--readonly"], { timers: tick(5000) });
-    expect(r.out).toMatch(/^Memory Audit is running: http:\/\/127.0.0.1:3210\n.*kill \$\(lsof -ti tcp:3210\)/);
+    expect(r.out).toBe("Memory Audit is running: http://127.0.0.1:3210\nIt keeps running in the background; stop it with `kill -- -4242`.\n");
     const [bin, args, opts] = h.spawn.mock.calls[0];
     expect(bin).toBe(process.execPath);
     expect(args).toEqual([path.join(appDir, "bin", "memory-audit.mjs"), "--port", "3210", "--no-open", "--readonly"]);
     expect(opts.detached).toBe(true);
     expect(app.unref).toHaveBeenCalled();
+  });
+
+  it("leaves out the stop command when the process id is unknown", async () => {
+    process.env.PATH = "";
+    up(new Error("down"), 200);
+    h.spawn.mockReturnValue(new FakeApp());
+    expect((await cli(["ui"])).out).toBe("Memory Audit is running: http://127.0.0.1:3210\nIt keeps running in the background.\n");
   });
 
   it("uses an installed memory-audit command, and reports when it exits", async () => {
@@ -341,7 +396,7 @@ describe("ui", () => {
     h.spawn.mockImplementation(() => (queueMicrotask(() => app.emit("error", new Error("ENOENT"))), app));
     const r = await cli(["ui"]);
     expect(h.spawn.mock.calls[0].slice(0, 2)).toEqual(["npx", ["--yes", "memory-audit", "--port", "3210", "--no-open"]]);
-    expect(r.err).toMatch(/couldn't start \(npx memory-audit exited\)[\s\S]*npm link/);
+    expect(r.err).toMatch(/couldn't start \(npx memory-audit exited\)[\s\S]*npm install -g memory-audit/);
     expect(readFileSync(path.join(sb.base, ".memory-audit", "ui.log"), "utf8")).toBe("");
   });
 
@@ -351,7 +406,7 @@ describe("ui", () => {
     up();
     h.spawn.mockReturnValue(new FakeApp());
     const r = await cli(["ui"], { timers: tick(91_000) });
-    expect(r.err).toMatch(/didn't start within 90 seconds/);
+    expect(r.err).toMatch(/still starting after 90 seconds[\s\S]*again in a minute/);
   });
 
   it("prints the message of an error without a stack", async () => {

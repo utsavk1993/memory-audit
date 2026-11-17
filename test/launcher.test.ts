@@ -33,9 +33,11 @@ describe("launcher", () => {
   });
 
   it("accepts a --port value without treating it as an option", () => {
-    const r = run("--port", "abc");
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain("--port must be a number");
+    for (const bad of ["abc", "0", "99999"]) {
+      const r = run("--port", bad);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("--port must be a number from 1 to 65535");
+    }
   });
 
   it("explains a port that is already in use", async () => {

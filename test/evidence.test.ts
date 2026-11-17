@@ -119,7 +119,7 @@ describe("toResult", () => {
 
   it("treats a claim with no real citation as unverified and recomputes the verdict", async () => {
     const c = await ctx();
-    const claim = (status: string, evidence: { session: string; line: number }[]) => ({ claim: status, status, explanation: "e", evidence });
+    const claim = (status: "supported" | "outdated" | "contradicted" | "unverified", evidence: { session: string; line: number }[]) => ({ claim: status, status, explanation: "e", evidence });
     // The only "contradicted" claim cites an invented line, so the verdict falls to the next most serious claim.
     const r = toResult(c, "db.md", out({ verdict: "contradicted", claims: [
       claim("contradicted", [{ session: "S9", line: 1 }]),
