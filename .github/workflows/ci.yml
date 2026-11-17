@@ -58,6 +58,43 @@ jobs:
             exit 1
           }
 
+  package:
+    name: Installed package works
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Pack exactly what `npm publish` would upload (prepack builds it), install it into an empty folder
+      # like a user would, then run the launcher, the CLI and the web app from there.
+      - name: Pack and install
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          mkdir "$RUNNER_TEMP/app" && cd "$RUNNER_TEMP/app"
+          npm init -y > /dev/null
+          npm install "$RUNNER_TEMP"/memory-audit-*.tgz
+      - name: Run it
+        working-directory: ${{ runner.temp }}/app
+        env:
+          MEMORY_AUDIT_CLAUDE_DIR: ${{ runner.temp }}/projects
+        run: |
+          mkdir -p "$MEMORY_AUDIT_CLAUDE_DIR/-tmp-demo/memory"
+          printf -- '- [Note](note.md) - x\n' > "$MEMORY_AUDIT_CLAUDE_DIR/-tmp-demo/memory/MEMORY.md"
+          printf -- '---\nname: note\ndescription: x\n---\n\nA note.\n' > "$MEMORY_AUDIT_CLAUDE_DIR/-tmp-demo/memory/note.md"
+          test "$(npx memory-audit --version)" = "$(node -p 'require("memory-audit/package.json").version')"
+          npx memory-audit check --project -tmp-demo
+          npx memory-audit ui --port 3299
+          curl -fsS http://127.0.0.1:3299/ | grep -q '<title>Memory Audit'
+          curl -fsS http://127.0.0.1:3299/api/claude-code/projects | grep -q '"id":"-tmp-demo"'
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
