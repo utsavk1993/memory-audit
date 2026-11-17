@@ -130,13 +130,23 @@ describe("toResult", () => {
     expect(r.reasons[0].explanation).toBe("e (No real log line backs this, so it counts as unverified.)");
     expect(r.downgradedClaims).toBe(2);
     expect(r.verdict).toBe("unverified");
+    expect(r.confidence).toBe("low");
+    expect(r.summary).toBe("2 claims cite no real log line, so they count as unverified. The AI's summary: s");
+    const one = toResult(c, "db.md", out({ claims: [claim("supported", [])] }), meta);
+    expect(one.summary).toBe("1 claim cites no real log line, so it counts as unverified. The AI's summary: s");
     expect(r.proposedRaw).toBeNull(); // nothing backed is out of date or wrong any more
 
     // Real citations: the model's statuses and verdict stand.
     const kept = toResult(c, "db.md", out({ verdict: "outdated", claims: [claim("outdated", [{ session: "S1", line: 1 }]), claim("unverified", [])] }), meta);
     expect(kept.downgradedClaims).toBe(0);
     expect(kept.verdict).toBe("outdated");
+    expect(kept.confidence).toBe("high");
+    expect(kept.summary).toBe("s");
     expect(kept.reasons[1].explanation).toBe("e");
+
+    // The verdict follows the claims even when the model's own verdict disagrees with them.
+    const green = toResult(c, "db.md", out({ verdict: "supported", claims: [claim("contradicted", [{ session: "S1", line: 1 }])] }), meta);
+    expect(green.verdict).toBe("contradicted");
   });
 
   it("hasRealFix only for outdated or contradicted claims", () => {

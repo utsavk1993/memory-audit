@@ -169,7 +169,8 @@ export function toResult(
       evidence,
     };
   });
-  const verdict = downgraded ? worst(reasons.map((r) => r.status)) : (out.verdict as AiVerdict);
+  // The verdict always follows the claims (the most serious one), so a contradiction can't sit under a green verdict.
+  const verdict = reasons.length ? worst(reasons.map((r) => r.status)) : (out.verdict as AiVerdict);
 
   const proposed = out.proposed_note.trim() ? out.proposed_note.replace(/\s*$/, "\n") : null;
   const result: AiResult = {
@@ -178,8 +179,11 @@ export function toResult(
     provider: meta.provider,
     model: meta.model,
     verdict,
-    confidence: out.confidence,
-    summary: out.summary,
+    // The model's confidence and summary were about its own citations; say plainly that some didn't hold up.
+    confidence: downgraded ? "low" : out.confidence,
+    summary: downgraded
+      ? `${downgraded === 1 ? "1 claim cites" : `${downgraded} claims cite`} no real log line, so ${downgraded === 1 ? "it counts" : "they count"} as unverified. The AI's summary: ${out.summary}`
+      : out.summary,
     reasons,
     // Only suggest a fix when the logs show something is out of date or wrong. With no evidence either way,
     // the "fix" would just tag lines "(unverified)", which the Mark as unverified action already covers.

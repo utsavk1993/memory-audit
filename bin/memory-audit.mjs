@@ -10,7 +10,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const args = process.argv.slice(2);
+// `--port=4000` means the same as `--port 4000` (the terminal commands accept both forms too).
+const args = process.argv.slice(2).flatMap((a) => (a.startsWith("--port=") ? ["--port", a.slice(7)] : [a]));
 const flag = (n) => args.includes(n);
 const value = (n, d) => {
   const i = args.indexOf(n);
@@ -76,7 +77,7 @@ if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
 if (!(await portFree(port))) {
   console.error(`Port ${port} is already in use.
   If Memory Audit is already running, open http://127.0.0.1:${port}
-  Otherwise start it on another port: npx memory-audit --port ${Number(port) + 1}`);
+  Otherwise start it on another port: npx memory-audit --port ${Number(port) < 65535 ? Number(port) + 1 : Number(port) - 1}`);
   process.exit(1);
 }
 if (!existsSync(path.join(root, ".next", "BUILD_ID"))) {

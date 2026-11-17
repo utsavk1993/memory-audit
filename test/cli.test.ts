@@ -130,11 +130,25 @@ describe("finding the project", () => {
     }
   });
 
-  it("accepts --flag=value and rejects options it doesn't know", async () => {
+  it("accepts --flag=value and rejects options the command doesn't take", async () => {
     expect((await cli(["check", `--project=${PROJECT}`])).out).toContain(`project id ${PROJECT}`);
-    const r = await cli(["check", "--jsno"]);
-    expect(r.code).toBe(2);
-    expect(r.err).toMatch(/Unknown option --jsno\. Options: --project, --sha, --port, --json, --readonly, --help\./);
+    const typo = await cli(["check", "--jsno"]);
+    expect(typo.code).toBe(2);
+    expect(typo.err).toBe("memory-audit: check doesn't take --jsno. Its options: --project, --json.\n");
+    // An option meant for another command must not be ignored: apply --readonly would still write.
+    const r = await cli(["apply", "alpha", "-", "--sha", sha(ALPHA), "--readonly"], { stdin: "changed" });
+    expect(r.err).toMatch(/apply doesn't take --readonly/);
+    expect(readNote("alpha.md")).toBe(ALPHA);
+  });
+
+  it("refuses an option with a missing or empty value, and a value on a switch", async () => {
+    expect((await cli(["check", "--project="])).err).toBe("memory-audit: --project needs a value.\n");
+    expect((await cli(["check", "--project"])).err).toBe("memory-audit: --project needs a value.\n");
+    expect((await cli(["check", "--json=yes"])).err).toBe("memory-audit: --json doesn't take a value.\n");
+  });
+
+  it("doesn't treat built-in object names as commands", async () => {
+    expect((await cli(["toString"])).err).toMatch(/Unknown command "toString"/);
   });
 
   it("takes an id that exists on disk even if it isn't a project folder", async () => {
@@ -229,7 +243,7 @@ describe("evidence and save-result", () => {
 
   it("saves a verdict from stdin (code fences allowed) and shows the proposed diff", async () => {
     const { out } = await cli(["save-result", "alpha.md", "-"], { stdin: "```json\n" + verdict() + "\n```" });
-    expect(out).toContain("Saved. Verdict: outdated (high confidence).");
+    expect(out).toContain("Saved. Verdict: outdated (low confidence)."); // low: one claim's citation was invented
     expect(out).toContain("Dropped 1 citation that didn't match a real log line.");
     expect(out).toMatch(/ {2}outdated {5}alpha {2}\[“remember alpha first note” line 1\]/);
     expect(out).toContain("  unverified   beta\n");
@@ -347,6 +361,8 @@ describe("ui", () => {
     up(404);
     const r = await cli(["ui", "--port", "4000"]);
     expect(r.err).toMatch(/Another app is using port 4000.*--port 4001/);
+    up(404);
+    expect((await cli(["ui", "--port", "65535"])).err).toMatch(/--port 65534/); // never suggests 65536
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
@@ -382,11 +398,21 @@ describe("ui", () => {
     process.env.PATH = binDir;
     process.env.MEMORY_AUDIT_APP_DIR = path.join(sb.base, "no-checkout");
     up();
+    // An earlier run's output is already in the log; only this run's lines are shown.
+    const logFile = path.join(sb.base, ".memory-audit", "ui.log");
+    mkdirSync(path.dirname(logFile), { recursive: true });
+    writeFileSync(logFile, "old run\n");
     const app = new FakeApp();
-    h.spawn.mockImplementation(() => (queueMicrotask(() => app.emit("exit", 1)), app));
+    h.spawn.mockImplementation(() => {
+      writeFileSync(logFile, "Port 3210 is already in use.\n", { flag: "a" });
+      queueMicrotask(() => app.emit("exit", 1));
+      return app;
+    });
     const r = await cli(["ui"]);
     expect(h.spawn.mock.calls[0][0]).toBe(path.join(binDir, "memory-audit"));
-    expect(r.err).toContain(`couldn't start (${path.join(binDir, "memory-audit")} exited)`);
+    expect(r.err).toBe(
+      `memory-audit: Memory Audit couldn't start (${path.join(binDir, "memory-audit")} exited). It said:\nPort 3210 is already in use.\nFull log: ${logFile}\n`,
+    );
   });
 
   it("falls back to npx, and explains when it can't start", async () => {
@@ -397,6 +423,7 @@ describe("ui", () => {
     const r = await cli(["ui"]);
     expect(h.spawn.mock.calls[0].slice(0, 2)).toEqual(["npx", ["--yes", "memory-audit", "--port", "3210", "--no-open"]]);
     expect(r.err).toMatch(/couldn't start \(npx memory-audit exited\)[\s\S]*npm install -g memory-audit/);
+    expect(r.err).toMatch(/If it had to be downloaded, check your network connection/);
     expect(readFileSync(path.join(sb.base, ".memory-audit", "ui.log"), "utf8")).toBe("");
   });
 

@@ -34,7 +34,7 @@ describe("launcher", () => {
 
   it("accepts a --port value without treating it as an option", () => {
     for (const bad of ["abc", "0", "99999"]) {
-      const r = run("--port", bad);
+      const r = bad === "0" ? run(`--port=${bad}`) : run("--port", bad);
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("--port must be a number from 1 to 65535");
     }

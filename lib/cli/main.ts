@@ -13,7 +13,7 @@
 // Every command takes --project <id-or-path>; by default the project is the current folder.
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -23,7 +23,7 @@ import { auditProject } from "../audit/checks";
 import { buildContext, JSON_SHAPE, lastResult, Output, saveResult, SYSTEM, toResult } from "../audit/evidence";
 import type { NoteAudit, Severity } from "../audit/types";
 import { addToIndex, ConflictError, listBackups, removeBrokenLinks, restoreBackup, sha, writeNote } from "../audit/writer";
-import { pickLauncher, stopHint } from "./launcher";
+import { pickLauncher, spawnCommand, stopHint } from "./launcher";
 import { BadRequestError, listProjects, NotFoundError, projectsRoot, readMemory } from "../claude-code/reader";
 
 class UsageError extends Error {}
@@ -32,23 +32,48 @@ const argv = process.argv.slice(2);
 const flags = new Map<string, string | true>();
 const pos: string[] = [];
 const VALUE_FLAGS = ["--project", "--sha", "--port"];
-const KNOWN_FLAGS = [...VALUE_FLAGS, "--json", "--readonly", "--help"];
-const unknownFlags: string[] = [];
+// Each command accepts only its own options. An option it ignored could make it act on the wrong note or
+// project, or write when you asked it not to (e.g. `apply --readonly`), so anything else is an error.
+const FLAGS_FOR: Record<string, string[]> = {
+  check: ["--project", "--json"],
+  evidence: ["--project"],
+  "save-result": ["--project"],
+  apply: ["--project", "--sha"],
+  undo: ["--project"],
+  "add-to-index": ["--project"],
+  "remove-broken-links": ["--project"],
+  ui: ["--port", "--readonly"],
+};
+const badFlags: string[] = []; // messages
 for (let i = 0; i < argv.length; i++) {
-  const [a, inline] = argv[i].startsWith("--") && argv[i].includes("=") ? [argv[i].slice(0, argv[i].indexOf("=")), argv[i].slice(argv[i].indexOf("=") + 1)] : [argv[i], undefined];
-  if (a.startsWith("--")) {
-    // An unknown flag could mean the command acts on the wrong note or project, so it is an error (see run()).
-    if (!KNOWN_FLAGS.includes(a)) unknownFlags.push(a);
+  if (!argv[i].startsWith("--")) {
+    pos.push(argv[i]);
+    continue;
+  }
+  const eq = argv[i].indexOf("=");
+  const a = eq > 0 ? argv[i].slice(0, eq) : argv[i];
+  const inline = eq > 0 ? argv[i].slice(eq + 1) : undefined;
+  if (VALUE_FLAGS.includes(a)) {
     const next = argv[i + 1];
-    if (inline !== undefined) flags.set(a, inline);
-    else if (next !== undefined && !next.startsWith("--") && VALUE_FLAGS.includes(a)) flags.set(a, argv[++i]);
-    else flags.set(a, true);
-  } else pos.push(a);
+    const v = inline ?? (next !== undefined && !next.startsWith("--") ? argv[++i] : undefined);
+    if (v) flags.set(a, v);
+    else badFlags.push(`${a} needs a value.`);
+  } else if (inline !== undefined) badFlags.push(`${a} doesn't take a value.`);
+  else flags.set(a, true);
 }
 const [cmd, ...args] = pos;
 const opt = (k: string) => (typeof flags.get(k) === "string" ? (flags.get(k) as string) : undefined);
 const out = (s = "") => process.stdout.write(`${s}\n`);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const realpathOr = (p: string) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+};
+/** A port to suggest instead of a busy one. */
+const otherPort = (port: string) => (Number(port) < 65535 ? Number(port) + 1 : Number(port) - 1);
 
 // ───────────── Which project? ─────────────
 
@@ -63,11 +88,12 @@ async function resolveProject(): Promise<{ id: string; path: string }> {
   if (given && !/[\\/]/.test(given) && given !== "." && given !== ".." && existsSync(path.join(root, given)))
     return { id: given, path: projects.find((p) => p.id === given)?.path ?? given };
   const start = path.resolve(given ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
-  const home = homedir();
+  // Both spellings of home: as given (minus any trailing slash) and with symlinks resolved.
+  const homes = new Set([path.resolve(homedir()), realpathOr(homedir())]);
   // Walk up from the folder so a session started in a subfolder still finds its project, but never up to
   // your home folder: a new folder inside it must not silently use (and edit) the home folder's memory.
   for (let dir = start; ; dir = path.dirname(dir)) {
-    if (dir === home && start !== home) break;
+    if (homes.has(dir) && !homes.has(start)) break;
     const id = encode(dir);
     const match = existsSync(path.join(root, id)) ? { id } : projects.find((p) => p.path === dir);
     if (match) {
@@ -274,7 +300,7 @@ async function ui() {
       out("It was started earlier, so --readonly doesn't apply to it. To be sure it can't write, stop it and run this again.");
     return;
   }
-  if (before === "other") throw new UsageError(`Another app is using port ${port}. Pick a free one with --port, e.g. --port ${Number(port) + 1}.`);
+  if (before === "other") throw new UsageError(`Another app is using port ${port}. Pick a free one with --port, e.g. --port ${otherPort(port)}.`);
 
   const launch = pickLauncher({
     appDir: process.env.MEMORY_AUDIT_APP_DIR,
@@ -287,9 +313,11 @@ async function ui() {
   const logDir = path.join(homedir(), ".memory-audit");
   mkdirSync(logDir, { recursive: true });
   const logFile = path.join(logDir, "ui.log");
+  const logStart = existsSync(logFile) ? statSync(logFile).size : 0;
   const log = openSync(logFile, "a");
   const extra = flags.has("--readonly") ? ["--readonly"] : [];
-  const app = spawn(launch.bin, [...launch.args, "--port", port, "--no-open", ...extra], {
+  const [command, spawnArgs] = spawnCommand(launch, ["--port", port, "--no-open", ...extra]);
+  const app = spawn(command, spawnArgs, {
     detached: true,
     shell: launch.shell,
     windowsHide: true,
@@ -302,11 +330,16 @@ async function ui() {
   app.unref();
 
   for (let i = 0; i < 90; i++) {
-    if (exited !== undefined)
+    if (exited !== undefined) {
+      // Show what the launcher said (busy port, not built, download failed…) rather than guessing.
+      const said = readFileSync(logFile, "utf8").slice(logStart).trim().split("\n").slice(-8).join("\n");
       throw new UsageError(
-        `Memory Audit couldn't start (${launch.label} exited). See ${logFile}.\n` +
-          "Check your network connection, or install it once with `npm install -g memory-audit`.",
+        `Memory Audit couldn't start (${launch.label} exited). ` +
+          (said
+            ? `It said:\n${said}\nFull log: ${logFile}`
+            : `See ${logFile}.\nIf it had to be downloaded, check your network connection, or install it once with \`npm install -g memory-audit\`.`),
       );
+    }
     if ((await probe()) === "ours") {
       const stop = stopHint(app.pid, process.platform);
       return out(`Memory Audit is running: ${url}\nIt keeps running in the background${stop ? `; stop it with \`${stop}\`` : ""}.`);
@@ -347,9 +380,12 @@ const COMMANDS: Record<string, () => Promise<unknown>> = {
 
 async function main() {
   if (!cmd || cmd === "help" || flags.has("--help")) return out(HELP);
-  const run = COMMANDS[cmd];
+  const run = Object.hasOwn(COMMANDS, cmd) ? COMMANDS[cmd] : undefined;
   if (!run) throw new UsageError(`Unknown command "${cmd}".\n\n${HELP}`);
-  if (unknownFlags.length) throw new UsageError(`Unknown option ${unknownFlags[0]}. Options: ${KNOWN_FLAGS.join(", ")}.`);
+  if (badFlags.length) throw new UsageError(badFlags[0]);
+  const allowed = FLAGS_FOR[cmd];
+  const other = [...flags.keys()].find((f) => !allowed.includes(f));
+  if (other) throw new UsageError(`${cmd} doesn't take ${other}. Its options: ${allowed.join(", ")}.`);
   await run();
 }
 
