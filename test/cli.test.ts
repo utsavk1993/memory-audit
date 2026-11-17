@@ -329,7 +329,7 @@ describe("ui", () => {
     h.spawn.mockImplementation(() => (queueMicrotask(() => app.emit("exit", 1)), app));
     const r = await cli(["ui"]);
     expect(h.spawn.mock.calls[0][0]).toBe(path.join(binDir, "memory-audit"));
-    expect(r.err).toMatch(new RegExp(`couldn't start \\(${path.join(binDir, "memory-audit").replace(/[/.]/g, "\\$&")} exited\\)`));
+    expect(r.err).toContain(`couldn't start (${path.join(binDir, "memory-audit")} exited)`);
   });
 
   it("falls back to npx, and explains when it can't start", async () => {

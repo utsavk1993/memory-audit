@@ -221,6 +221,7 @@ describe("verify with Claude Code", () => {
 
   it("runs a locked-down CLI with no tools and saves the verdict", async () => {
     process.env.MEMORY_AUDIT_CLAUDE_MODEL = "sonnet";
+    process.env.CLAUDECODE = "1"; // as when Memory Audit itself was started from a Claude Code session
     finish(
       JSON.stringify({
         structured_output: OUT,
@@ -235,6 +236,8 @@ describe("verify with Claude Code", () => {
     const [, args, opts] = h.spawn.mock.calls[0];
     expect(args).toEqual(expect.arrayContaining(["-p", "--tools", "", "--safe-mode", "--no-session-persistence", "--model", "sonnet"]));
     expect(opts.cwd).toMatch(/memory-audit-run$/);
+    expect(opts.env).not.toHaveProperty("CLAUDECODE");
+    expect(opts.env).toHaveProperty("MEMORY_AUDIT_CLAUDE_MODEL", "sonnet");
     expect(child.stdin.end).toHaveBeenCalledWith(expect.stringContaining("<note file=\"db.md\""));
   });
 

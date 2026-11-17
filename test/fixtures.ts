@@ -31,6 +31,8 @@ export function sandbox(): Sandbox {
   process.env.MEMORY_AUDIT_BACKUP_DIR = backups;
   process.env.MEMORY_AUDIT_DATA_DIR = path.join(base, "results");
   delete process.env.MEMORY_AUDIT_READONLY;
+  // Running the tests from inside Claude Code sets these; CI doesn't. Clear them so both behave the same.
+  for (const k of Object.keys(process.env)) if (/^CLAUDE/.test(k)) delete process.env[k];
 
   return {
     base,
