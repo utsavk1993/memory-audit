@@ -89,7 +89,10 @@ describe("per-note checks", () => {
   it("lists paths that no longer exist, searching the project and one level down", async () => {
     sb.writeNote("one.md", note("One", "d", "See `README.md`, `app.ts`... no: `src/app.ts` and `gone/x.ts`, ~/definitely-missing-xyz and /etc."));
     sb.writeNote("two.md", note("Two", "d", "`a/one.ts` `b/two.ts`"));
-    sb.writeNote("ok.md", note("Ok", "d", `Lives in ${repo}/README.md and \`src/app.ts\`.`));
+    process.env.HOME = sb.base;
+    writeFileSync(path.join(sb.base, "notes.txt"), "");
+    // Paths that exist and are detected on every OS (the temp dir is under /var on macOS but /tmp on Linux).
+    sb.writeNote("ok.md", note("Ok", "d", "See /etc/hosts, ~/notes.txt and `src/app.ts`."));
     sb.writeSession("s1", [user(daysAgo(1), "hi", repo)]);
     const one = await codes("one.md");
     expect(one["missing-paths"].detail).toBe("~/definitely-missing-xyz\ngone/x.ts");
