@@ -68,7 +68,11 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 /** True when both paths are the same folder on disk; when either is missing, when they are equal as paths. */
 const sameFolder = (a: string, b: string) => {
   try {
-    const [x, y] = [statSync(a), statSync(b)];
+    const [x, y] = [statSync(a, { bigint: true }), statSync(b, { bigint: true })];
+    // Some network or FUSE file systems report inode 0 for everything: then only equal paths count.
+    // (Not reproducible on a test machine's local disk.)
+    /* v8 ignore next */
+    if (x.ino === BigInt(0) || y.ino === BigInt(0)) return path.resolve(a) === path.resolve(b);
     return x.dev === y.dev && x.ino === y.ino;
   } catch {
     return path.resolve(a) === path.resolve(b);
@@ -79,8 +83,8 @@ function readFrom(file: string, offset: number) {
   const fd = openSync(file, "r");
   try {
     const buf = Buffer.alloc(Math.max(0, fstatSync(fd).size - offset));
-    readSync(fd, buf, 0, buf.length, offset);
-    return buf.toString("utf8");
+    const n = readSync(fd, buf, 0, buf.length, offset);
+    return buf.subarray(0, n).toString("utf8");
   } finally {
     closeSync(fd);
   }
@@ -104,10 +108,11 @@ async function resolveProject(): Promise<{ id: string; path: string }> {
   // "Is this folder home?" compares the folders on disk (same device and inode), so a trailing slash, a
   // symlink or a different letter case (macOS, Windows) can't slip past the guard.
   const atHome = (d: string) => sameFolder(d, homedir());
+  const startIsHome = atHome(start);
   // Walk up from the folder so a session started in a subfolder still finds its project, but never up to
   // your home folder: a new folder inside it must not silently use (and edit) the home folder's memory.
   for (let dir = start; ; dir = path.dirname(dir)) {
-    if (atHome(dir) && !atHome(start)) break;
+    if (!startIsHome && atHome(dir)) break;
     const id = encode(dir);
     // On a case-insensitive disk a differently-cased path finds the folder too, so use the real folder's name.
     const folder = path.join(root, id);
@@ -297,30 +302,18 @@ async function removeBrokenLinksCmd() {
   for (const l of r.removed) out(`  ${l}`);
 }
 
-/** True when the running app lists the same projects this CLI sees (so it reads the same folder). */
-async function sameProjects(url: string) {
-  try {
-    const r = await fetch(`${url}/api/claude-code/projects`, { signal: AbortSignal.timeout(3000) });
-    const theirs = ((await r.json()) as { id: string }[]).map((p) => p.id).sort();
-    const ours = (await listProjects()).map((p) => p.id).sort();
-    return theirs.join("\n") === ours.join("\n");
-  } catch {
-    return true; // can't tell: say nothing rather than guess
-  }
-}
-
 async function ui() {
-  // Same default as the launcher: --port, else $PORT, else 3210.
-  const port = opt("--port") ?? (process.env.PORT || "3210");
-  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)
-    throw new UsageError(`${opt("--port") ? "--port" : "PORT"} must be a number from 1 to 65535.`);
+  // Not $PORT: in a Claude Code session that usually belongs to the user's own dev server.
+  const port = opt("--port") ?? "3210";
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new UsageError("--port must be a number from 1 to 65535.");
   const url = `http://127.0.0.1:${port}`;
   // "ours" only when the page is Memory Audit, so another app on the port isn't mistaken for it.
   const probe = async (): Promise<"ours" | "other" | "down"> => {
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(1500) });
-      if (!(await r.text()).includes("<title>Memory Audit")) return "other";
-      return r.ok ? "ours" : "down"; // Memory Audit answering with an error (e.g. mid-restart): not ready yet
+      const page = await r.text();
+      if (r.status >= 500) return "down"; // maybe Memory Audit failing or restarting: the launcher's port check decides
+      return r.ok && page.includes("<title>Memory Audit") ? "ours" : "other";
     } catch {
       return "down";
     }
@@ -330,10 +323,6 @@ async function ui() {
     out(`Memory Audit is already running: ${url}`);
     if (flags.has("--readonly"))
       out("It was started earlier, so --readonly doesn't apply to it. To be sure it can't write, stop it and run this again.");
-    // It lists projects from the folder it was started with (CLAUDE_CONFIG_DIR / MEMORY_AUDIT_CLAUDE_DIR). The list
-    // is read from disk on every request, so a different list means a different folder.
-    if (!(await sameProjects(url)))
-      out("It shows a different projects folder than this one (it was started with other settings). Stop it and run this again to see these projects.");
     return;
   }
   if (before === "other") throw new UsageError(`Another app is using port ${port}. Pick a free one with --port, e.g. --port ${otherPort(port)}.`);

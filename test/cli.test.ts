@@ -377,28 +377,12 @@ describe("ui", () => {
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
-  it("says when the running app shows a different projects folder", async () => {
-    running([{ id: "-Users-someone-else" }]);
-    expect((await cli(["ui"])).out).toMatch(/shows a different projects folder than this one/);
-    // If its list can't be read, it says nothing rather than guess.
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => (url.endsWith("/projects") ? new Response("not json") : new Response("<title>Memory Audit</title>"))));
-    expect((await cli(["ui"])).out).toBe("Memory Audit is already running: http://127.0.0.1:3210\n");
-  });
-
-  it("uses $PORT like the launcher, and checks it", async () => {
-    running();
-    process.env.PORT = "4100";
-    expect((await cli(["ui"])).out).toBe("Memory Audit is already running: http://127.0.0.1:4100\n");
-    process.env.PORT = "abc";
-    expect((await cli(["ui"])).err).toMatch(/PORT must be a number from 1 to 65535/);
-  });
-
   it("checks the port before anything else", async () => {
     for (const bad of ["abc", "0", "70000"]) expect((await cli(["ui", "--port", bad])).err).toMatch(/--port must be a number from 1 to 65535/);
     expect(h.spawn).not.toHaveBeenCalled();
   });
 
-  it("treats Memory Audit answering with an error as not ready yet, but any other app's error as another app", async () => {
+  it("treats a 5xx answer as not ready yet, and another app's page as another app", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout"] });
     process.env.PATH = "";
     const f = vi.fn()
@@ -408,7 +392,7 @@ describe("ui", () => {
     h.spawn.mockReturnValue(new FakeApp());
     expect((await cli(["ui"], { timers: tick(2000) })).out).toMatch(/^Memory Audit is running/);
     expect(h.spawn).toHaveBeenCalled();
-    up(502);
+    up(404);
     expect((await cli(["ui"])).err).toMatch(/Another app is using port 3210/);
   });
 
