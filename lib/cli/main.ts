@@ -40,6 +40,7 @@ for (let i = 0; i < argv.length; i++) {
 const [cmd, ...args] = pos;
 const opt = (k: string) => (typeof flags.get(k) === "string" ? (flags.get(k) as string) : undefined);
 const out = (s = "") => process.stdout.write(`${s}\n`);
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 // ───────────── Which project? ─────────────
 
@@ -89,7 +90,7 @@ async function check() {
   }
 
   out(`Memory Audit · ${project.path}`);
-  out(`${audit.notes.length} notes, ${audit.sessionsRead} session logs read · project id ${project.id}`);
+  out(`${plural(audit.notes.length, "note")}, ${plural(audit.sessionsRead, "session log")} read · project id ${project.id}`);
   out();
   for (const f of audit.project) {
     out(`${ICON[f.severity]} [${WORD[f.severity]}] MEMORY.md: ${f.title}${f.fix ? `  (fix: ${f.fix})` : ""}`);
@@ -164,7 +165,7 @@ async function saveResultCmd() {
   }
   if (!parsed.success) throw new UsageError(`The verdict doesn't have the expected shape:\n${parsed.error.message}`);
   const ctx = await buildContext(project.id, file);
-  const { droppedCitations, ...result } = toResult(ctx, file, parsed.data, {
+  const { droppedCitations, downgradedClaims, ...result } = toResult(ctx, file, parsed.data, {
     provider: "claude-code",
     model: "Claude Code session (memory-audit plugin)",
     inputTokens: 0,
@@ -176,6 +177,10 @@ async function saveResultCmd() {
   out(`Saved. Verdict: ${result.verdict} (${result.confidence} confidence). The web UI now shows this result too.`);
   if (droppedCitations)
     out(`Dropped ${droppedCitations} citation${droppedCitations > 1 ? "s" : ""} that didn't match a real log line.`);
+  if (downgradedClaims)
+    out(
+      `${downgradedClaims} claim${downgradedClaims > 1 ? "s were" : " was"} left with no real citation, so ${downgradedClaims > 1 ? "they count" : "it counts"} as unverified.`,
+    );
   for (const r of result.reasons)
     out(`  ${r.status.padEnd(12)} ${r.claim}${r.evidence.length ? `  [${r.evidence.map((e) => `“${e.sessionTitle.slice(0, 40)}” line ${e.line}`).join("; ")}]` : ""}`);
   if (result.proposedRaw) {
@@ -231,7 +236,7 @@ async function removeBrokenLinksCmd() {
   const r = await removeBrokenLinks(project.id);
   if (!r.removed.length) return out("MEMORY.md has no links to missing notes.");
   out(`Removed ${r.removed.length} line${r.removed.length > 1 ? "s" : ""} from MEMORY.md:`);
-  for (const l of r.removed) out(`  - ${l}`);
+  for (const l of r.removed) out(`  ${l}`);
 }
 
 async function ui() {

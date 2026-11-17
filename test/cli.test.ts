@@ -199,16 +199,18 @@ describe("evidence and save-result", () => {
     expect(out).toContain("Saved. Verdict: outdated (high confidence).");
     expect(out).toContain("Dropped 1 citation that didn't match a real log line.");
     expect(out).toMatch(/ {2}outdated {5}alpha {2}\[“remember alpha first note” line 1\]/);
-    expect(out).toContain("  supported    beta\n");
+    expect(out).toContain("  unverified   beta\n");
+    expect(out).toContain("1 claim was left with no real citation, so it counts as unverified.");
     expect(out).toContain(`Proposed fix (note_sha ${sha(ALPHA)}):`);
     expect(out).toContain("- Alpha body\n+ Alpha body v2");
   });
 
   it("reads the verdict from a file, and says when no fix is proposed", async () => {
     const f = path.join(sb.base, "v.json");
-    writeFileSync(f, verdict({ proposed_note: "", claims: [{ claim: "c", status: "supported", explanation: "e", evidence: [{ session: "S8", line: 1 }, { session: "S9", line: 1 }] }] }));
+    writeFileSync(f, verdict({ proposed_note: "", claims: [{ claim: "c", status: "supported", explanation: "e", evidence: [{ session: "S8", line: 1 }, { session: "S9", line: 1 }] }, { claim: "d", status: "supported", explanation: "e", evidence: [] }] }));
     const { out } = await cli(["save-result", "alpha", f]);
     expect(out).toContain("Dropped 2 citations");
+    expect(out).toContain("2 claims were left with no real citation, so they count as unverified.");
     expect(out).toContain("No fix proposed");
   });
 
@@ -270,7 +272,7 @@ describe("index fixes", () => {
   it("removes broken links", async () => {
     expect((await cli(["remove-broken-links"])).out).toBe("MEMORY.md has no links to missing notes.\n");
     sb.writeNote("MEMORY.md", "- [Alpha](alpha.md)\n- [X](x.md)\n");
-    expect((await cli(["remove-broken-links"])).out).toBe("Removed 1 line from MEMORY.md:\n  - - [X](x.md)\n");
+    expect((await cli(["remove-broken-links"])).out).toBe("Removed 1 line from MEMORY.md:\n  - [X](x.md)\n");
     sb.writeNote("MEMORY.md", "- [X](x.md)\n- [Y](y.md)\n");
     expect((await cli(["remove-broken-links"])).out).toMatch(/^Removed 2 lines/);
   });

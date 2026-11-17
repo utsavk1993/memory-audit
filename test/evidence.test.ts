@@ -117,6 +117,28 @@ describe("toResult", () => {
     expect(toResult(c, "db.md", unverified, meta).proposedRaw).toBeNull();
   });
 
+  it("treats a claim with no real citation as unverified and recomputes the verdict", async () => {
+    const c = await ctx();
+    const claim = (status: string, evidence: { session: string; line: number }[]) => ({ claim: status, status, explanation: "e", evidence });
+    // The only "contradicted" claim cites an invented line, so the verdict falls to the next most serious claim.
+    const r = toResult(c, "db.md", out({ verdict: "contradicted", claims: [
+      claim("contradicted", [{ session: "S9", line: 1 }]),
+      claim("supported", []),
+      claim("supported", [{ session: "S1", line: 1 }]),
+    ] }), meta);
+    expect(r.reasons.map((x) => x.status)).toEqual(["unverified", "unverified", "supported"]);
+    expect(r.reasons[0].explanation).toBe("e (No real log line backs this, so it counts as unverified.)");
+    expect(r.downgradedClaims).toBe(2);
+    expect(r.verdict).toBe("unverified");
+    expect(r.proposedRaw).toBeNull(); // nothing backed is out of date or wrong any more
+
+    // Real citations: the model's statuses and verdict stand.
+    const kept = toResult(c, "db.md", out({ verdict: "outdated", claims: [claim("outdated", [{ session: "S1", line: 1 }]), claim("unverified", [])] }), meta);
+    expect(kept.downgradedClaims).toBe(0);
+    expect(kept.verdict).toBe("outdated");
+    expect(kept.reasons[1].explanation).toBe("e");
+  });
+
   it("hasRealFix only for outdated or contradicted claims", () => {
     expect(hasRealFix([{ status: "supported" }, { status: "unverified" }])).toBe(false);
     expect(hasRealFix([{ status: "contradicted" }])).toBe(true);
