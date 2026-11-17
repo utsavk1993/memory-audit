@@ -30,7 +30,9 @@ describe("hosted demo (MEMORY_AUDIT_DEMO=1)", () => {
   it("reads the bundled made-up project, not the home folder", async () => {
     const projects = await listProjects();
     expect(projects.map((p) => p.id)).toEqual([PROJECT]);
+    // Dated by the logs, not by file times (Vercel resets those on deploy).
     expect(projects[0]).toMatchObject({ name: "acme-storefront", memoryCount: 5, sessionCount: 3 });
+    expect(projects[0].updatedAt).toMatch(/^2026-10-28T/);
   });
 
   it("gives the quick checks something to find", async () => {

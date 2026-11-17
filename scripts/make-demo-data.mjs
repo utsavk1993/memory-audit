@@ -144,6 +144,9 @@ const sessions = [
   },
 ];
 
+// When each note was last written, by the logs. Vercel resets file times on deploy, so the demo reads these instead.
+const noteTimes = { "db-conventions.md": "2026-05-04T09:12:00Z" }; // written in a conversation that's since been deleted
+
 function toLines(s) {
   clock = new Date(s.start);
   const labels = {};
@@ -156,6 +159,7 @@ function toLines(s) {
     } else if (t.kind === "assistant") {
       line = { type: "assistant", ...base(s.id), timestamp: at, message: { role: "assistant", content: [{ type: "text", text: t.text }] } };
     } else if (t.kind === "write") {
+      noteTimes[t.file] = at;
       line = {
         type: "assistant",
         ...base(s.id),
@@ -281,4 +285,8 @@ writeFileSync(path.join(projectDir, "memory", "MEMORY.md"), index);
 for (const [file, raw] of Object.entries(notes)) writeFileSync(path.join(projectDir, "memory", file), raw);
 sessions.forEach((s, i) => writeFileSync(path.join(projectDir, `${s.id}.jsonl`), built[i].lines.map((l) => JSON.stringify(l)).join("\n") + "\n"));
 writeFileSync(path.join(ROOT, "ai-results.json"), JSON.stringify(ai, null, 2) + "\n");
+const fileTimes = { [path.join(PROJECT, "memory", "MEMORY.md")]: built[0].lines.at(-1).timestamp };
+for (const [file, at] of Object.entries(noteTimes)) fileTimes[path.join(PROJECT, "memory", file)] = at;
+sessions.forEach((s, i) => (fileTimes[path.join(PROJECT, `${s.id}.jsonl`)] = built[i].lines.at(-1).timestamp));
+writeFileSync(path.join(ROOT, "file-times.json"), JSON.stringify(fileTimes, null, 2) + "\n");
 console.log(`Wrote ${Object.keys(notes).length} notes, ${sessions.length} sessions and ${Object.keys(ai).length} AI answers to ${ROOT}`);

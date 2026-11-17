@@ -17,7 +17,9 @@
   <img src="assets/demo.gif" alt="Memory Audit demo: quick checks flag a stale deploy note, the AI check finds it out of date with cited log lines, and the suggested fix is reviewed as a diff and saved with a backup" width="880">
 </p>
 
-<p align="center"><sub>The demo uses a made-up project. Your own notes and logs never leave your machine unless you run an AI check.</sub></p>
+<p align="center"><b><a href="https://memory-audit.vercel.app">Try the live demo →</a></b></p>
+
+<p align="center"><sub>The demo uses a made-up project, is read-only, and its AI check replays a saved answer. Your own notes and logs never leave your machine unless you run an AI check.</sub></p>
 
 Claude Code keeps long-term memory as small Markdown notes in `~/.claude/projects/<project>/memory/`. Every new session loads them and treats them as true. Some aren't: the agent guessed, misunderstood, or the facts changed later. Nothing checks them.
 
