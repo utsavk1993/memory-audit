@@ -23,6 +23,15 @@ export class ForbiddenError extends Error {}
 
 const LOCAL_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
 
+/** Host of an Origin header, or null when it isn't a URL (e.g. the literal "null" from sandboxed frames). */
+function originHost(origin: string): string | null {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Only the app's own page may call endpoints that write files or spend money.
  * - Host must be local (blocks DNS-rebinding).
@@ -33,7 +42,7 @@ export async function guardedJson<T>(req: Request): Promise<T> {
   const host = req.headers.get("host") ?? "";
   const origin = req.headers.get("origin");
   if (!LOCAL_HOST.test(host)) throw new ForbiddenError("Only available on localhost");
-  if (!origin || new URL(origin).host !== host) throw new ForbiddenError("Cross-site request blocked");
+  if (!origin || originHost(origin) !== host) throw new ForbiddenError("Cross-site request blocked");
   if (req.headers.get("x-memory-audit") !== "1") throw new ForbiddenError("Missing app header");
   try {
     return (await req.json()) as T;

@@ -24,8 +24,8 @@ interface Excerpt {
   event: SessionEvent;
 }
 
-const label = (e: SessionEvent) =>
-  e.kind === "user" ? "user" : e.kind === "assistant" ? "assistant" : e.kind === "memory_write" ? "memory write" : e.kind;
+// Only user, assistant and memory_write events are ever excerpted.
+const label = (e: SessionEvent) => (e.kind === "memory_write" ? "memory write" : e.kind);
 
 export type Context = Awaited<ReturnType<typeof buildContext>>;
 

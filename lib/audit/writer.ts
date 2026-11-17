@@ -122,10 +122,9 @@ export async function addToIndex(projectId: string, file: string) {
 
 export async function removeBrokenLinks(projectId: string) {
   const project = await getProject(projectId);
-  if (!project.brokenIndexLinks.length) return { backup: null, removed: [] as string[] };
-  const indexPath = child(memoryDirOf(projectId), "MEMORY.md");
-  const current = await readOrNull(indexPath);
-  if (current === null) throw new NotFoundError("MEMORY.md not found");
+  const current = await readOrNull(child(memoryDirOf(projectId), "MEMORY.md"));
+  // No index means no links, broken or not.
+  if (current === null || !project.brokenIndexLinks.length) return { backup: null, removed: [] as string[] };
   const broken = new Set(project.brokenIndexLinks);
   const removed: string[] = [];
   const kept = current.split("\n").filter((l) => {
