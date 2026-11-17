@@ -129,11 +129,13 @@ async function summarize(id: string): Promise<ProjectSummary> {
   let updated = 0;
   for (const f of sessions) {
     const s = await statOrNull(path.join(dir, f));
+    /* v8 ignore next -- s is only null if the file was deleted after it was listed */
     if (s) updated = Math.max(updated, s.mtimeMs);
     if (!cwd) cwd = (await scanSession(path.join(dir, f)).catch(() => null))?.cwd ?? null;
   }
   for (const f of memory) {
     const s = await statOrNull(path.join(dir, "memory", f));
+    /* v8 ignore next -- s is only null if the file was deleted after it was listed */
     if (s) updated = Math.max(updated, s.mtimeMs);
   }
   const p = cwd ?? guessPath(id);
@@ -150,6 +152,7 @@ async function summarize(id: string): Promise<ProjectSummary> {
 export async function listProjects(): Promise<ProjectSummary[]> {
   const root = projectsRoot();
   const dirs = (await listDir(root)).filter((e) => e.isDirectory()).map((e) => e.name);
+  /* v8 ignore next -- defensive: summarize() already swallows its own I/O errors */
   const all = await Promise.all(dirs.map((d) => summarize(d).catch(() => null)));
   return all
     .filter((p): p is ProjectSummary => p !== null)
