@@ -1,0 +1,215 @@
+{
+  "deploy-process.md": {
+    "verdict": "outdated",
+    "confidence": "high",
+    "summary": "This note still describes Heroku, but on Oct 28 you said the storefront moved to Fly.io and deploys are now `fly deploy`. The manual migration step is also gone.",
+    "claims": [
+      {
+        "claim": "Deploy with `npm run deploy:heroku` from main",
+        "status": "outdated",
+        "explanation": "True in June, but the Heroku script was replaced by `npm run deploy` (`fly deploy`) in October.",
+        "evidence": [
+          {
+            "session": "S1",
+            "line": 2
+          },
+          {
+            "session": "S3",
+            "line": 2
+          }
+        ]
+      },
+      {
+        "claim": "Staging and production are Heroku apps",
+        "status": "outdated",
+        "explanation": "The app names are the same, but they are Fly.io apps now.",
+        "evidence": [
+          {
+            "session": "S1",
+            "line": 2
+          },
+          {
+            "session": "S3",
+            "line": 2
+          }
+        ]
+      },
+      {
+        "claim": "Run `npm run db:migrate` against production after each deploy",
+        "status": "outdated",
+        "explanation": "Migrations now run automatically as Fly's release command.",
+        "evidence": [
+          {
+            "session": "S1",
+            "line": 6
+          },
+          {
+            "session": "S3",
+            "line": 6
+          }
+        ]
+      },
+      {
+        "claim": "Deploys need the Heroku CLI logged in as the shared ops account",
+        "status": "unverified",
+        "explanation": "No conversation mentions a shared ops account.",
+        "evidence": []
+      }
+    ],
+    "proposed_note": "---\nname: Deploy process\ndescription: How to deploy the storefront to Fly.io from main\nmetadata:\n  type: project\n---\n\nDeploy the storefront with `npm run deploy` (runs `fly deploy`) from the `main` branch.\n\n- Staging is the `acme-storefront-staging` Fly.io app; production is `acme-storefront`.\n- Migrations run automatically as Fly's release command; there is no manual migrate step.\n- Deploys need the Fly CLI logged in (unverified: which account).\n"
+  },
+  "code-style.md": {
+    "verdict": "contradicted",
+    "confidence": "high",
+    "summary": "You corrected this on Oct 28: the repo uses 2 spaces, not tabs. Double quotes are still right.",
+    "claims": [
+      {
+        "claim": "Indent with tabs in TypeScript files",
+        "status": "contradicted",
+        "explanation": "You said tabs are wrong for this repo and Prettier enforces 2 spaces.",
+        "evidence": [
+          {
+            "session": "S2",
+            "line": 8
+          },
+          {
+            "session": "S3",
+            "line": 12
+          }
+        ]
+      },
+      {
+        "claim": "Use double quotes in TypeScript files",
+        "status": "supported",
+        "explanation": "Asked for in July and confirmed in October.",
+        "evidence": [
+          {
+            "session": "S2",
+            "line": 8
+          },
+          {
+            "session": "S3",
+            "line": 12
+          }
+        ]
+      },
+      {
+        "claim": "Prettier runs on save, so don't hand-format",
+        "status": "supported",
+        "explanation": "Confirmed when the note was written and again in October.",
+        "evidence": [
+          {
+            "session": "S3",
+            "line": 12
+          }
+        ]
+      }
+    ],
+    "proposed_note": "---\nname: Code style\ndescription: Indent with 2 spaces and use double quotes in TypeScript files\nmetadata:\n  type: feedback\n---\n\nIndent with 2 spaces (not tabs) and use double quotes in all TypeScript files.\nPrettier runs on save and enforces this, so don't hand-format.\n"
+  },
+  "testing-preferences.md": {
+    "verdict": "supported",
+    "confidence": "high",
+    "summary": "Everything here matches what you asked for, and the October session still followed it.",
+    "claims": [
+      {
+        "claim": "Run `npm test` (vitest) before every commit",
+        "status": "supported",
+        "explanation": "You asked for this in July and again in October, when the full suite ran before committing.",
+        "evidence": [
+          {
+            "session": "S2",
+            "line": 6
+          },
+          {
+            "session": "S3",
+            "line": 10
+          }
+        ]
+      },
+      {
+        "claim": "A broken checkout test once reached production because the suite was skipped",
+        "status": "supported",
+        "explanation": "Your own words in July.",
+        "evidence": [
+          {
+            "session": "S2",
+            "line": 6
+          }
+        ]
+      },
+      {
+        "claim": "Prefer explicit assertions over snapshot tests",
+        "status": "supported",
+        "explanation": "You said snapshot diffs are hard to review; the checkout tests use explicit assertions.",
+        "evidence": [
+          {
+            "session": "S2",
+            "line": 5
+          },
+          {
+            "session": "S2",
+            "line": 6
+          }
+        ]
+      }
+    ],
+    "proposed_note": ""
+  },
+  "release-checklist.md": {
+    "verdict": "unverified",
+    "confidence": "medium",
+    "summary": "The steps match what you dictated in June, but nothing since shows a release being made, so they haven't been confirmed in practice.",
+    "claims": [
+      {
+        "claim": "Bump the version and update CHANGELOG.md",
+        "status": "supported",
+        "explanation": "You listed this step.",
+        "evidence": [
+          {
+            "session": "S1",
+            "line": 9
+          }
+        ]
+      },
+      {
+        "claim": "Load release secrets from `~/.config/acme/release.env`",
+        "status": "supported",
+        "explanation": "You gave this path in June. (The quick checks report it is missing on this machine.)",
+        "evidence": [
+          {
+            "session": "S1",
+            "line": 9
+          }
+        ]
+      },
+      {
+        "claim": "CI builds the release when the tag is pushed",
+        "status": "unverified",
+        "explanation": "You said to tag on main; no conversation says CI builds the release.",
+        "evidence": []
+      }
+    ],
+    "proposed_note": ""
+  },
+  "db-conventions.md": {
+    "verdict": "unverified",
+    "confidence": "low",
+    "summary": "The conversation that wrote this note has been deleted and no other log mentions Prisma or migrations reviews, so none of it can be checked.",
+    "claims": [
+      {
+        "claim": "Postgres through Prisma with snake_case tables",
+        "status": "unverified",
+        "explanation": "No remaining log mentions the database setup.",
+        "evidence": []
+      },
+      {
+        "claim": "Every migration is reviewed by a second person",
+        "status": "unverified",
+        "explanation": "Not mentioned in any remaining log.",
+        "evidence": []
+      }
+    ],
+    "proposed_note": ""
+  }
+}

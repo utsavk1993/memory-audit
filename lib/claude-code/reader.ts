@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { demoProjectsRoot, isDemo } from "../demo";
 import type {
   MemoryFile,
   MemoryFileSummary,
@@ -25,6 +26,7 @@ export class NotFoundError extends Error {}
 export class BadRequestError extends Error {}
 
 export function projectsRoot(): string {
+  if (isDemo()) return demoProjectsRoot();
   return path.resolve(process.env.MEMORY_AUDIT_CLAUDE_DIR ?? path.join(homedir(), ".claude", "projects"));
 }
 

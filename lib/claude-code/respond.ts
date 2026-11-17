@@ -1,5 +1,6 @@
 import { connection } from "next/server";
 import { AiError } from "../audit/ai";
+import { isDemo } from "../demo";
 import { ConflictError } from "../audit/writer";
 import { BadRequestError, NotFoundError } from "./reader";
 
@@ -41,7 +42,8 @@ function originHost(origin: string): string | null {
 export async function guardedJson<T>(req: Request): Promise<T> {
   const host = req.headers.get("host") ?? "";
   const origin = req.headers.get("origin");
-  if (!LOCAL_HOST.test(host)) throw new ForbiddenError("Only available on localhost");
+  // The hosted demo never writes or spends money (lib/demo.ts), so only it may be reached by a public host name.
+  if (!LOCAL_HOST.test(host) && !isDemo()) throw new ForbiddenError("Only available on localhost");
   if (!origin || originHost(origin) !== host) throw new ForbiddenError("Cross-site request blocked");
   if (req.headers.get("x-memory-audit") !== "1") throw new ForbiddenError("Missing app header");
   try {

@@ -15,6 +15,8 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
+  // The hosted demo (MEMORY_AUDIT_DEMO=1) reads its made-up project from demo/ at request time.
+  outputFileTracingIncludes: { "/api/**/*": ["./demo/**/*"] },
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {

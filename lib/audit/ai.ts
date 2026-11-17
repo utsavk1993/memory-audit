@@ -10,10 +10,14 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { BadRequestError } from "../claude-code/reader";
-import { buildContext, JSON_SHAPE, Output, saveResult, SYSTEM, toResult, type Out } from "./evidence";
+import { demoAnswer, isDemo } from "../demo";
+import { buildContext, JSON_SHAPE, lastResult as savedResult, Output, saveResult, SYSTEM, toResult, type Out } from "./evidence";
 import type { AiConnection, AiEstimate, AiProvider, AiResult } from "./types";
 
-export { lastResult } from "./evidence";
+/** The last saved AI result for a note. The demo never saves, so every visitor starts fresh. */
+export async function lastResult(projectId: string, file: string): Promise<AiResult | null> {
+  return isDemo() ? null : savedResult(projectId, file);
+}
 
 export class AiError extends Error {}
 
@@ -42,6 +46,7 @@ const NVIDIA_URL = process.env.NVIDIA_BASE_URL ?? "https://integrate.api.nvidia.
 const NVIDIA_MODEL = process.env.MEMORY_AUDIT_NVIDIA_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
 
 export function provider(): Provider | null {
+  if (isDemo()) return "claude-code"; // replays saved answers, see demoVerify()
   const forced = process.env.MEMORY_AUDIT_PROVIDER;
   if (forced === "claude-code" || forced === "anthropic" || forced === "nvidia") return forced;
   if (claudeBin()) return "claude-code";
@@ -82,6 +87,8 @@ const SESSION_ENV = /^(CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_AGENT_SDK_VERS
 
 /** Is the AI check ready to run? For Claude Code this asks `claude auth status`, so nothing is sent anywhere. */
 export async function connection(): Promise<AiConnection> {
+  if (isDemo())
+    return { provider: "claude-code", connected: true, account: "Demo · replays a saved answer, nothing is sent", fix: null };
   const p = provider();
   if (p === "anthropic") return { provider: p, connected: true, account: "Anthropic API key (from your terminal)", fix: null };
   if (p === "nvidia") return { provider: p, connected: true, account: "NVIDIA API key (from your terminal)", fix: null };
@@ -322,8 +329,10 @@ export async function estimate(projectId: string, file: string): Promise<AiEstim
     model:
       p === "nvidia"
         ? NVIDIA_MODEL
-        : p === "claude-code"
-          ? (process.env.MEMORY_AUDIT_CLAUDE_MODEL ?? "your Claude Code default model")
+        : isDemo()
+          ? `${MODEL} (saved demo answer)`
+          : p === "claude-code"
+            ? (process.env.MEMORY_AUDIT_CLAUDE_MODEL ?? "your Claude Code default model")
           : MODEL,
     inputTokens,
     maxOutputTokens: MAX_OUTPUT,
@@ -336,6 +345,7 @@ export async function estimate(projectId: string, file: string): Promise<AiEstim
 }
 
 export async function verify(projectId: string, file: string): Promise<AiResult> {
+  if (isDemo()) return demoVerify(projectId, file);
   const ctx = await buildContext(projectId, file);
   const p = provider();
   if (!p) throw new AiError(NO_KEY);
@@ -348,5 +358,23 @@ export async function verify(projectId: string, file: string): Promise<AiResult>
   const { droppedCitations: _dropped, ...result } = toResult(ctx, file, res.out, { provider: p, ...res });
   void _dropped;
   await saveResult(projectId, result);
+  return result;
+}
+
+/** Demo: run a saved answer through the same citation checks as a real one, so the evidence links work. Saves nothing. */
+async function demoVerify(projectId: string, file: string): Promise<AiResult> {
+  const ctx = await buildContext(projectId, file);
+  const out = await demoAnswer(file);
+  if (!out) throw new AiError("The demo has no saved AI answer for this note. Try another one.");
+  await new Promise((r) => setTimeout(r, 1_500)); // a beat, so the result doesn't look precomputed in the UI
+  const inputTokens = Math.ceil((SYSTEM.length + ctx.user.length) / 3.5);
+  const { droppedCitations: _dropped, ...result } = toResult(ctx, file, out, {
+    provider: "claude-code",
+    model: `${MODEL} (saved demo answer)`,
+    inputTokens,
+    outputTokens: Math.ceil(JSON.stringify(out).length / 3.5),
+    costUsd: null,
+  });
+  void _dropped;
   return result;
 }
