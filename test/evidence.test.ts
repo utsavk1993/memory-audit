@@ -117,6 +117,44 @@ describe("toResult", () => {
     expect(toResult(c, "db.md", unverified, meta).proposedRaw).toBeNull();
   });
 
+  it("treats a claim with no real citation as unverified and recomputes the verdict", async () => {
+    const c = await ctx();
+    const claim = (status: "supported" | "outdated" | "contradicted" | "unverified", evidence: { session: string; line: number }[]) => ({ claim: status, status, explanation: "e", evidence });
+    // The only "contradicted" claim cites an invented line, so the verdict falls to the next most serious claim.
+    const r = toResult(c, "db.md", out({ verdict: "contradicted", claims: [
+      claim("contradicted", [{ session: "S9", line: 1 }]),
+      claim("supported", []),
+      claim("supported", [{ session: "S1", line: 1 }]),
+    ] }), meta);
+    expect(r.reasons.map((x) => x.status)).toEqual(["unverified", "unverified", "supported"]);
+    expect(r.reasons[0].explanation).toBe("e (No real log line backs this, so it counts as unverified.)");
+    expect(r.downgradedClaims).toBe(2);
+    expect(r.verdict).toBe("unverified");
+    expect(r.confidence).toBe("low");
+    expect(r.summary).toBe("2 claims cite no real log line, so they count as unverified. The AI's summary: s");
+    const one = toResult(c, "db.md", out({ claims: [claim("supported", [])] }), meta);
+    expect(one.summary).toBe("1 claim cites no real log line, so it counts as unverified. The AI's summary: s");
+    expect(r.proposedRaw).toBeNull(); // nothing backed is out of date or wrong any more
+
+    // Real citations: the model's statuses and verdict stand.
+    const kept = toResult(c, "db.md", out({ verdict: "outdated", claims: [claim("outdated", [{ session: "S1", line: 1 }]), claim("unverified", [])] }), meta);
+    expect(kept.downgradedClaims).toBe(0);
+    expect(kept.verdict).toBe("outdated");
+    expect(kept.confidence).toBe("high");
+    expect(kept.summary).toBe("s");
+    expect(kept.reasons[1].explanation).toBe("e");
+
+    // No claims at all means nothing is cited, so the verdict is unverified whatever the model said.
+    const empty = toResult(c, "db.md", out({ verdict: "supported", claims: [] }), meta);
+    expect(empty).toMatchObject({ verdict: "unverified", confidence: "low" });
+    expect(empty.summary).toBe("The AI listed no claims with cited log lines, so this counts as unverified. The AI's summary: s");
+    expect(toResult(c, "db.md", out({ verdict: "unverified", claims: [] }), meta)).toMatchObject({ confidence: "low", summary: "s" });
+
+    // The verdict follows the claims even when the model's own verdict disagrees with them.
+    const green = toResult(c, "db.md", out({ verdict: "supported", claims: [claim("contradicted", [{ session: "S1", line: 1 }])] }), meta);
+    expect(green.verdict).toBe("contradicted");
+  });
+
   it("hasRealFix only for outdated or contradicted claims", () => {
     expect(hasRealFix([{ status: "supported" }, { status: "unverified" }])).toBe(false);
     expect(hasRealFix([{ status: "contradicted" }])).toBe(true);

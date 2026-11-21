@@ -1,6 +1,6 @@
 {
   "name": "memory-audit",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Check your Claude Code memory notes against your own session logs, and fix the wrong ones, without leaving the chat.",
   "author": {
     "name": "Utsav Kumar"

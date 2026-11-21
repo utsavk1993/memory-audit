@@ -145,7 +145,7 @@ export function toResult(
   file: string,
   out: Out,
   meta: { provider: AiProvider; model: string; inputTokens: number; outputTokens: number; costUsd: number | null },
-): AiResult & { droppedCitations: number } {
+): AiResult & { droppedCitations: number; downgradedClaims: number } {
   const byTag = new Map([...ctx.tags].map(([id, tag]) => [tag, ctx.sessions.find((s) => s.id === id)!]));
   let dropped = 0;
   const cite = (session: string, line: number): Evidence | null => {
@@ -155,28 +155,51 @@ export function toResult(
     return s && e ? toEvidence(s, e) : null;
   };
 
+  // A claim left with no real citation (none given, or all invented) is "unverified", as the instructions
+  // say, whatever status the model gave it. Otherwise an invented citation could still produce a green verdict.
+  let downgraded = 0;
+  const reasons = out.claims.map((c) => {
+    const evidence = c.evidence.map((x) => cite(x.session, x.line)).filter((x): x is Evidence => x !== null);
+    const unbacked = !evidence.length && c.status !== "unverified";
+    if (unbacked) downgraded++;
+    return {
+      claim: c.claim,
+      status: (unbacked ? "unverified" : c.status) as AiVerdict,
+      explanation: unbacked ? `${c.explanation} (No real log line backs this, so it counts as unverified.)` : c.explanation,
+      evidence,
+    };
+  });
+  // The verdict always follows the claims (the most serious one), so a contradiction can't sit under a green verdict.
+  // With no claims there is nothing cited at all, so it is unverified whatever the model said.
+  const verdict = reasons.length ? worst(reasons.map((r) => r.status)) : "unverified";
+  const noClaims = !reasons.length && out.verdict !== "unverified";
+
   const proposed = out.proposed_note.trim() ? out.proposed_note.replace(/\s*$/, "\n") : null;
   const result: AiResult = {
     file,
     ranAt: new Date().toISOString(),
     provider: meta.provider,
     model: meta.model,
-    verdict: out.verdict as AiVerdict,
-    confidence: out.confidence,
-    summary: out.summary,
-    reasons: out.claims.map((c) => ({
-      claim: c.claim,
-      status: c.status as AiVerdict,
-      explanation: c.explanation,
-      evidence: c.evidence.map((x) => cite(x.session, x.line)).filter((x): x is Evidence => x !== null),
-    })),
+    verdict,
+    // The model's confidence and summary were about its own citations; say plainly that some didn't hold up.
+    confidence: downgraded || !reasons.length ? "low" : out.confidence,
+    summary: downgraded
+      ? `${downgraded === 1 ? "1 claim cites" : `${downgraded} claims cite`} no real log line, so ${downgraded === 1 ? "it counts" : "they count"} as unverified. The AI's summary: ${out.summary}`
+      : noClaims
+        ? `The AI listed no claims with cited log lines, so this counts as unverified. The AI's summary: ${out.summary}`
+        : out.summary,
+    reasons,
     // Only suggest a fix when the logs show something is out of date or wrong. With no evidence either way,
     // the "fix" would just tag lines "(unverified)", which the Mark as unverified action already covers.
-    proposedRaw: proposed && proposed !== ctx.note.raw && hasRealFix(out.claims) ? proposed : null,
+    proposedRaw: proposed && proposed !== ctx.note.raw && hasRealFix(reasons) ? proposed : null,
     usage: { inputTokens: meta.inputTokens, outputTokens: meta.outputTokens, costUsd: meta.costUsd },
   };
-  return { ...result, droppedCitations: dropped };
+  return { ...result, droppedCitations: dropped, downgradedClaims: downgraded };
 }
+
+const SEVERITY: AiVerdict[] = ["supported", "unverified", "outdated", "contradicted"];
+/** The most serious status: contradicted > outdated > unverified > supported. */
+const worst = (statuses: AiVerdict[]) => statuses.reduce((a, b) => (SEVERITY.indexOf(b) > SEVERITY.indexOf(a) ? b : a), "supported");
 
 // Results are kept so you don't pay twice for the same check.
 function resultsPath(projectId: string, file: string) {

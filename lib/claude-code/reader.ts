@@ -25,7 +25,9 @@ export class NotFoundError extends Error {}
 export class BadRequestError extends Error {}
 
 export function projectsRoot(): string {
-  return path.resolve(process.env.MEMORY_AUDIT_CLAUDE_DIR ?? path.join(homedir(), ".claude", "projects"));
+  // CLAUDE_CONFIG_DIR is Claude Code's own setting for where it keeps its files (e.g. one folder per account).
+  const config = process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), ".claude");
+  return path.resolve(process.env.MEMORY_AUDIT_CLAUDE_DIR ?? path.join(config, "projects"));
 }
 
 /** Resolve a single path segment inside `base`, refusing anything that could escape it. */

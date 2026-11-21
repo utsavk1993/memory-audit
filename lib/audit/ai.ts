@@ -345,8 +345,9 @@ export async function verify(projectId: string, file: string): Promise<AiResult>
       : p === "nvidia"
         ? await callNvidia(ctx.user)
         : await callAnthropic(ctx.user);
-  const { droppedCitations: _dropped, ...result } = toResult(ctx, file, res.out, { provider: p, ...res });
+  const { droppedCitations: _dropped, downgradedClaims: _downgraded, ...result } = toResult(ctx, file, res.out, { provider: p, ...res });
   void _dropped;
+  void _downgraded;
   await saveResult(projectId, result);
   return result;
 }

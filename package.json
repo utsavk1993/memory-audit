@@ -1,6 +1,6 @@
 {
   "name": "memory-audit",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Inspect, verify and fix your Claude Code memory notes against your own session logs. Runs locally.",
   "license": "MIT",
   "author": "Utsav Kumar",
@@ -30,6 +30,10 @@
     "!.next/cache",
     "!.next/dev",
     "!.next/trace*",
+    "!.next/**/*.map",
+    "!.next/build",
+    "!.next/types",
+    "!.next/diagnostics",
     "public",
     "next.config.ts",
     "README.md",
@@ -50,16 +54,12 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.8.0",
-    "lucide-react": "^1.71.0",
     "next": "16.4.6",
     "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "zod": "^4.6.7"
+    "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "@tailwindcss/turbopack": "4.3.3",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -68,8 +68,12 @@
     "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
+    "lucide-react": "^1.71.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwindcss": "4.3.3",
     "typescript": "^5",
-    "vitest": "^4.1.12"
+    "vitest": "^4.1.12",
+    "zod": "^4.6.7"
   }
 }

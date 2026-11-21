@@ -13,15 +13,17 @@
 // Every command takes --project <id-or-path>; by default the project is the current folder.
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { diffLines } from "../diff";
 import { auditProject } from "../audit/checks";
 import { buildContext, JSON_SHAPE, lastResult, Output, saveResult, SYSTEM, toResult } from "../audit/evidence";
 import type { NoteAudit, Severity } from "../audit/types";
 import { addToIndex, ConflictError, listBackups, removeBrokenLinks, restoreBackup, sha, writeNote } from "../audit/writer";
+import { pickLauncher, spawnCommand, stopHint } from "./launcher";
 import { BadRequestError, listProjects, NotFoundError, projectsRoot, readMemory } from "../claude-code/reader";
 
 class UsageError extends Error {}
@@ -29,17 +31,66 @@ class UsageError extends Error {}
 const argv = process.argv.slice(2);
 const flags = new Map<string, string | true>();
 const pos: string[] = [];
+const VALUE_FLAGS = ["--project", "--sha", "--port"];
+// Each command accepts only its own options. An option it ignored could make it act on the wrong note or
+// project, or write when you asked it not to (e.g. `apply --readonly`), so anything else is an error.
+const FLAGS_FOR: Record<string, string[]> = {
+  check: ["--project", "--json"],
+  evidence: ["--project"],
+  "save-result": ["--project"],
+  apply: ["--project", "--sha"],
+  undo: ["--project"],
+  "add-to-index": ["--project"],
+  "remove-broken-links": ["--project"],
+  ui: ["--port", "--readonly"],
+};
+const badFlags: string[] = []; // messages
 for (let i = 0; i < argv.length; i++) {
-  const a = argv[i];
-  if (a.startsWith("--")) {
+  if (!argv[i].startsWith("--")) {
+    pos.push(argv[i]);
+    continue;
+  }
+  const eq = argv[i].indexOf("=");
+  const a = eq > 0 ? argv[i].slice(0, eq) : argv[i];
+  const inline = eq > 0 ? argv[i].slice(eq + 1) : undefined;
+  if (VALUE_FLAGS.includes(a)) {
     const next = argv[i + 1];
-    if (next !== undefined && !next.startsWith("--") && ["--project", "--sha", "--port"].includes(a)) flags.set(a, argv[++i]);
-    else flags.set(a, true);
-  } else pos.push(a);
+    const v = inline ?? (next !== undefined && !next.startsWith("--") ? argv[++i] : undefined);
+    if (v) flags.set(a, v);
+    else badFlags.push(`${a} needs a value.`);
+  } else if (inline !== undefined) badFlags.push(`${a} doesn't take a value.`);
+  else flags.set(a, true);
 }
 const [cmd, ...args] = pos;
 const opt = (k: string) => (typeof flags.get(k) === "string" ? (flags.get(k) as string) : undefined);
 const out = (s = "") => process.stdout.write(`${s}\n`);
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+/** True when both paths are the same folder on disk; when either is missing, when they are equal as paths. */
+const sameFolder = (a: string, b: string) => {
+  try {
+    const [x, y] = [statSync(a, { bigint: true }), statSync(b, { bigint: true })];
+    // Some network or FUSE file systems report inode 0 for everything: then only equal paths count.
+    // (Not reproducible on a test machine's local disk.)
+    /* v8 ignore next */
+    if (x.ino === BigInt(0) || y.ino === BigInt(0)) return path.resolve(a) === path.resolve(b);
+    return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    return path.resolve(a) === path.resolve(b);
+  }
+};
+/** A file's text from a byte offset on, without reading what comes before it. */
+function readFrom(file: string, offset: number) {
+  const fd = openSync(file, "r");
+  try {
+    const buf = Buffer.alloc(Math.max(0, fstatSync(fd).size - offset));
+    const n = readSync(fd, buf, 0, buf.length, offset);
+    return buf.subarray(0, n).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+/** A port to suggest instead of a busy one. */
+const otherPort = (port: string) => (Number(port) < 65535 ? Number(port) + 1 : Number(port) - 1);
 
 // ───────────── Which project? ─────────────
 
@@ -50,15 +101,27 @@ async function resolveProject(): Promise<{ id: string; path: string }> {
   const given = opt("--project");
   const root = projectsRoot();
   const projects = await listProjects();
-  if (given && !given.includes("/") && existsSync(path.join(root, given)))
+  // A project id is a single folder name; ".", ".." and anything with a separator is a path.
+  if (given && !/[\\/]/.test(given) && given !== "." && given !== ".." && existsSync(path.join(root, given)))
     return { id: given, path: projects.find((p) => p.id === given)?.path ?? given };
   const start = path.resolve(given ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
-  // Walk up from the folder so a session started in a subfolder still finds its project.
+  // "Is this folder home?" compares the folders on disk (same device and inode), so a trailing slash, a
+  // symlink or a different letter case (macOS, Windows) can't slip past the guard.
+  const atHome = (d: string) => sameFolder(d, homedir());
+  const startIsHome = atHome(start);
+  // Walk up from the folder so a session started in a subfolder still finds its project, but never up to
+  // your home folder: a new folder inside it must not silently use (and edit) the home folder's memory.
   for (let dir = start; ; dir = path.dirname(dir)) {
+    if (!startIsHome && atHome(dir)) break;
     const id = encode(dir);
-    if (existsSync(path.join(root, id))) return { id, path: dir };
-    const byPath = projects.find((p) => p.path === dir);
-    if (byPath) return { id: byPath.id, path: dir };
+    // On a case-insensitive disk a differently-cased path finds the folder too, so use the real folder's name.
+    const folder = path.join(root, id);
+    const onDisk = existsSync(folder) ? (projects.find((p) => sameFolder(path.join(root, p.id), folder)) ?? { id }) : undefined;
+    const match = onDisk ?? projects.find((p) => p.path === dir);
+    if (match) {
+      if (dir !== start) process.stderr.write(`memory-audit: using the project for ${dir} (there is none for ${start}).\n`);
+      return { id: match.id, path: dir };
+    }
     if (path.dirname(dir) === dir) break;
   }
   throw new NotFoundError(
@@ -89,7 +152,7 @@ async function check() {
   }
 
   out(`Memory Audit · ${project.path}`);
-  out(`${audit.notes.length} notes, ${audit.sessionsRead} session logs read · project id ${project.id}`);
+  out(`${plural(audit.notes.length, "note")}, ${plural(audit.sessionsRead, "session log")} read · project id ${project.id}`);
   out();
   for (const f of audit.project) {
     out(`${ICON[f.severity]} [${WORD[f.severity]}] MEMORY.md: ${f.title}${f.fix ? `  (fix: ${f.fix})` : ""}`);
@@ -103,7 +166,7 @@ async function check() {
   for (const n of flagged) printNote(n, results.get(n.file) ?? null);
   const quiet = notes.filter((n) => n.status === "info" || n.status === "ok");
   if (quiet.length) {
-    out(`✓ ${quiet.length} note${quiet.length > 1 ? "s" : ""} with no warning signs:`);
+    out(`✓ ${plural(quiet.length, "note")} with no warning signs:`);
     for (const n of quiet) {
       const ai = results.get(n.file);
       out(`  ${n.file}${ai ? `  (AI check: ${ai.verdict}, ${ai.ranAt.slice(0, 10)})` : ""}`);
@@ -164,7 +227,7 @@ async function saveResultCmd() {
   }
   if (!parsed.success) throw new UsageError(`The verdict doesn't have the expected shape:\n${parsed.error.message}`);
   const ctx = await buildContext(project.id, file);
-  const { droppedCitations, ...result } = toResult(ctx, file, parsed.data, {
+  const { droppedCitations, downgradedClaims, ...result } = toResult(ctx, file, parsed.data, {
     provider: "claude-code",
     model: "Claude Code session (memory-audit plugin)",
     inputTokens: 0,
@@ -175,7 +238,11 @@ async function saveResultCmd() {
 
   out(`Saved. Verdict: ${result.verdict} (${result.confidence} confidence). The web UI now shows this result too.`);
   if (droppedCitations)
-    out(`Dropped ${droppedCitations} citation${droppedCitations > 1 ? "s" : ""} that didn't match a real log line.`);
+    out(`Dropped ${plural(droppedCitations, "citation")} that didn't match a real log line.`);
+  if (downgradedClaims)
+    out(
+      `${plural(downgradedClaims, "claim")} had no real citation, so ${downgradedClaims === 1 ? "it counts" : "they count"} as unverified.`,
+    );
   for (const r of result.reasons)
     out(`  ${r.status.padEnd(12)} ${r.claim}${r.evidence.length ? `  [${r.evidence.map((e) => `“${e.sessionTitle.slice(0, 40)}” line ${e.line}`).join("; ")}]` : ""}`);
   if (result.proposedRaw) {
@@ -199,13 +266,14 @@ async function apply() {
   let next = await readInput(args[1]);
   if (!next.trim()) throw new UsageError("The new note is empty.");
   next = next.replace(/\s*$/, "\n");
+  // apply only replaces a note you reviewed; a mistyped name must not create a new one.
   const current = await readMemory(project.id, file).catch(() => null);
-  const r = await writeNote(project.id, file, next, current ? expected : null, "Edited from Claude Code (memory-audit plugin)");
-  if (current) {
-    out(`Updated ${file}.`);
-    out(unified(current.raw, next));
-  } else out(`Created ${file}.`);
-  if (r.backup) out(`Backup: ${r.backup.id}. Undo with \`memory-audit undo ${file}\` or the Undo button in the web UI.`);
+  if (!current) throw new NotFoundError(`${file} doesn't exist in this project. Check the name with \`memory-audit check\`.`);
+  const r = await writeNote(project.id, file, next, expected, "Edited from Claude Code (memory-audit plugin)");
+  out(`Updated ${file}.`);
+  out(unified(current.raw, next));
+  // Replacing an existing note always backs it up first.
+  out(`Backup: ${r.backup!.id}. Undo with \`memory-audit undo ${file}\` or the Undo button in the web UI.`);
 }
 
 async function undo() {
@@ -230,54 +298,84 @@ async function removeBrokenLinksCmd() {
   const project = await resolveProject();
   const r = await removeBrokenLinks(project.id);
   if (!r.removed.length) return out("MEMORY.md has no links to missing notes.");
-  out(`Removed ${r.removed.length} line${r.removed.length > 1 ? "s" : ""} from MEMORY.md:`);
-  for (const l of r.removed) out(`  - ${l}`);
+  out(`Removed ${plural(r.removed.length, "line")} from MEMORY.md:`);
+  for (const l of r.removed) out(`  ${l}`);
 }
 
 async function ui() {
+  // Not $PORT: in a Claude Code session that usually belongs to the user's own dev server.
   const port = opt("--port") ?? "3210";
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new UsageError("--port must be a number from 1 to 65535.");
   const url = `http://127.0.0.1:${port}`;
-  const up = async () => {
+  // "ours" only when the page is Memory Audit, so another app on the port isn't mistaken for it.
+  const probe = async (): Promise<"ours" | "other" | "down"> => {
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(1500) });
-      return r.ok || r.status < 500;
+      const page = await r.text();
+      if (r.status >= 500) return "down"; // maybe Memory Audit failing or restarting: the launcher's port check decides
+      return r.ok && page.includes("<title>Memory Audit") ? "ours" : "other";
     } catch {
-      return false;
+      return "down";
     }
   };
-  if (await up()) return out(`Memory Audit is already running: ${url}`);
+  const before = await probe();
+  if (before === "ours") {
+    out(`Memory Audit is already running: ${url}`);
+    if (flags.has("--readonly"))
+      out("It was started earlier, so --readonly doesn't apply to it. To be sure it can't write, stop it and run this again.");
+    return;
+  }
+  if (before === "other") throw new UsageError(`Another app is using port ${port}. Pick a free one with --port, e.g. --port ${otherPort(port)}.`);
 
-  // A source checkout (MEMORY_AUDIT_APP_DIR), an installed `memory-audit` command, or npx, in that order.
-  const appDir = process.env.MEMORY_AUDIT_APP_DIR;
-  const launcher = appDir ? path.join(path.resolve(appDir), "bin", "memory-audit.mjs") : null;
-  const onPath = (process.env.PATH ?? "").split(path.delimiter).map((d) => path.join(d, "memory-audit")).find((p) => existsSync(p));
-  const [bin, binArgs] =
-    launcher && existsSync(launcher)
-      ? [process.execPath, [launcher]]
-      : onPath
-        ? [onPath, []]
-        : ["npx", ["--yes", "memory-audit"]];
+  const launch = pickLauncher({
+    appDir: process.env.MEMORY_AUDIT_APP_DIR,
+    selfFile: fileURLToPath(import.meta.url),
+    pathEnv: process.env.PATH,
+    platform: process.platform,
+    exists: existsSync,
+    execPath: process.execPath,
+  });
   const logDir = path.join(homedir(), ".memory-audit");
   mkdirSync(logDir, { recursive: true });
-  const log = openSync(path.join(logDir, "ui.log"), "a");
+  const logFile = path.join(logDir, "ui.log");
+  const log = openSync(logFile, "a");
+  // Size from the open file itself, so only lines written by this launch are shown on failure.
+  const logStart = fstatSync(log).size;
   const extra = flags.has("--readonly") ? ["--readonly"] : [];
-  const app = spawn(bin, [...binArgs, "--port", port, "--no-open", ...extra], { detached: true, stdio: ["ignore", log, log] });
-  // If the launcher gives up (e.g. npx can't find the package), say so now instead of waiting out the timeout.
+  const [command, spawnArgs] = spawnCommand(launch, ["--port", port, "--no-open", ...extra]);
+  const app = spawn(command, spawnArgs, {
+    detached: true,
+    shell: launch.shell,
+    windowsHide: true,
+    stdio: ["ignore", log, log],
+  });
+  // If the launcher gives up (e.g. npx can't download the package), say so now instead of waiting out the timeout.
   let exited: number | null | undefined;
   app.on("exit", (code) => (exited = code));
   app.on("error", () => (exited = -1));
   app.unref();
 
   for (let i = 0; i < 90; i++) {
-    if (exited !== undefined)
+    if (exited !== undefined) {
+      // Show what the launcher said (busy port, not built, download failed…) rather than guessing.
+      const said = readFrom(logFile, logStart).trim().split("\n").slice(-8).join("\n");
       throw new UsageError(
-        `Memory Audit couldn't start (${bin === "npx" ? "npx memory-audit" : bin} exited). See ${path.join(logDir, "ui.log")}.\n` +
-          "Until the package is on npm, run `npm link` in a Memory Audit checkout, or set MEMORY_AUDIT_APP_DIR to it.",
+        `Memory Audit couldn't start (${launch.label} exited). ` +
+          (said
+            ? `It said:\n${said}\nFull log: ${logFile}`
+            : `See ${logFile}.\nIf it had to be downloaded, check your network connection, or install it once with \`npm install -g memory-audit\`.`),
       );
-    if (await up()) return out(`Memory Audit is running: ${url}\nIt keeps running in the background; stop it with \`kill $(lsof -ti tcp:${port})\`.`);
+    }
+    if ((await probe()) === "ours") {
+      const stop = stopHint(app.pid, process.platform);
+      return out(`Memory Audit is running: ${url}\nIt keeps running in the background${stop ? `; stop it with \`${stop}\`` : ""}.`);
+    }
     await new Promise((r) => setTimeout(r, 1000));
   }
-  throw new UsageError(`Memory Audit didn't start within 90 seconds. See ${path.join(logDir, "ui.log")}.`);
+  throw new UsageError(
+    `Memory Audit is still starting after 90 seconds (the first run downloads it, which can be slow). ` +
+      `Run \`memory-audit ui\` again in a minute. Log: ${logFile}`,
+  );
 }
 
 const HELP = `memory-audit: check your Claude Code memory notes against your own session logs.
@@ -308,8 +406,12 @@ const COMMANDS: Record<string, () => Promise<unknown>> = {
 
 async function main() {
   if (!cmd || cmd === "help" || flags.has("--help")) return out(HELP);
-  const run = COMMANDS[cmd];
+  const run = Object.hasOwn(COMMANDS, cmd) ? COMMANDS[cmd] : undefined;
   if (!run) throw new UsageError(`Unknown command "${cmd}".\n\n${HELP}`);
+  if (badFlags.length) throw new UsageError(badFlags[0]);
+  const allowed = FLAGS_FOR[cmd];
+  const other = [...flags.keys()].find((f) => !allowed.includes(f));
+  if (other) throw new UsageError(`${cmd} doesn't take ${other}. Its options: ${allowed.join(", ")}.`);
   await run();
 }
 
